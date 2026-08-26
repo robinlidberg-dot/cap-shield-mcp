@@ -3,7 +3,8 @@
 Context selection and compression for AI agents — with the recall
 measured, not claimed.
 
-One file. No dependencies. No SDK required.
+The server itself imports nothing outside the standard library. Install
+it as a package, or take it as a single file — both work.
 
 ## Why
 
@@ -27,15 +28,14 @@ confidently on half a basis.
 ## Install
 
 ```bash
-curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
+pip install cap-shield
 ```
 
 ```json
 {
   "mcpServers": {
     "cap-shield": {
-      "command": "python",
-      "args": ["/absolute/path/to/cap_mcp.py"],
+      "command": "cap-shield-mcp",
       "env": {
         "CAP_SHIELD_API_KEY": "cap_live_..."
       }
@@ -44,10 +44,19 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 }
 ```
 
-Python 3.9+. Nothing else.
+Python 3.9+. The `env` block is only needed for `remember` and
+`assemble_context` — leave it out and the two measuring tools still work.
 
-The `env` block is only needed for `remember` and `assemble_context`.
-Leave it out and the two measuring tools still work.
+Also published to the official MCP registry as
+`io.github.robinlidberg-dot/cap-shield`.
+
+Prefer a single file over a package?
+
+```bash
+curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
+```
+
+Then the command is `python` and the argument is the path to the file.
 
 The optional [SKILL.md](SKILL.md) tells an agent *when* to use these
 tools — and when not to.
