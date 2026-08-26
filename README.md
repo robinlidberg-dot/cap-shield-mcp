@@ -35,13 +35,19 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
   "mcpServers": {
     "cap-shield": {
       "command": "python",
-      "args": ["/absolute/path/to/cap_mcp.py"]
+      "args": ["/absolute/path/to/cap_mcp.py"],
+      "env": {
+        "CAP_SHIELD_API_KEY": "cap_live_..."
+      }
     }
   }
 }
 ```
 
 Python 3.9+. Nothing else.
+
+The `env` block is only needed for `remember` and `assemble_context`.
+Leave it out and the two measuring tools still work.
 
 The optional [SKILL.md](SKILL.md) tells an agent *when* to use these
 tools — and when not to.
