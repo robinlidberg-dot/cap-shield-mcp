@@ -92,22 +92,32 @@ count. Collection is silent and local; nothing is sent anywhere.
 
 ## The MCP server
 
-One file, no dependencies, no SDK required.
-
 ```bash
-curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
+pip install cap-shield
 ```
 
 ```json
 {
   "mcpServers": {
     "cap-shield": {
-      "command": "python",
-      "args": ["/absolute/path/to/cap_mcp.py"]
+      "command": "cap-shield-mcp",
+      "env": {
+        "CAP_SHIELD_API_KEY": "cap_live_..."
+      }
     }
   }
 }
 ```
+
+The `env` block is only needed for the two tools that use memory.
+
+Or take the server as a single file, if a package is unwelcome:
+
+```bash
+curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
+```
+
+The server itself imports nothing outside the standard library.
 
 Five tools:
 
