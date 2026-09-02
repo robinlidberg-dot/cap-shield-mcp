@@ -184,6 +184,32 @@ Follow the same rules the service follows about itself:
 - **Say when something has not been measured.** `measured: false` is an
   answer, not a failure.
 
+## Dictionaries improve on the customer's own traffic
+
+The shared dictionaries are trained on open corpora. A customer's own
+dictionary is trained on their traffic, in their own isolated store, and
+is never shared or merged into the curated ones.
+
+**The part worth knowing:** a new version is adopted only if it measures
+better on held-out data that neither version was trained on. A
+retraining that does not win is rejected, the old dictionary stays, and
+the rejection is logged with both figures.
+
+That gate matters because a dictionary trained on too little or too
+skewed traffic measures WORSE than none — the payload falls back to raw
+and the header is still added.
+
+Old versions are never deleted, so packets compressed under any earlier
+version still unpack.
+
+Retraining is manual by default (`POST /api/v1/catalog/mature`).
+Automatic retraining exists but is off unless the customer has enabled
+both `training` and `auto_mature`, and it consumes quota.
+
+**Do not promise a figure for this.** What maturity gains depends on the
+customer's traffic. The response reports `old_saving_pct`,
+`new_saving_pct` and `improvement_pp` — quote those, not an estimate.
+
 ## Everything else
 
 `https://cap-shield-robin.fly.dev/.well-known/cap-shield.json` carries
