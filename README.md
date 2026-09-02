@@ -3,8 +3,7 @@
 Context selection and compression for AI agents — with the recall
 measured, not claimed.
 
-The server itself imports nothing outside the standard library. Install
-it as a package, or take it as a single file — both work.
+One file. No dependencies. No SDK required.
 
 ## Why
 
@@ -28,38 +27,52 @@ confidently on half a basis.
 ## Install
 
 ```bash
-pip install cap-shield
+curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 ```
 
 ```json
 {
   "mcpServers": {
     "cap-shield": {
-      "command": "cap-shield-mcp",
-      "env": {
-        "CAP_SHIELD_API_KEY": "cap_live_..."
-      }
+      "command": "python",
+      "args": ["/absolute/path/to/cap_mcp.py"]
     }
   }
 }
 ```
 
-Python 3.9+. The `env` block is only needed for `remember` and
-`assemble_context` — leave it out and the two measuring tools still work.
-
-Also published to the official MCP registry as
-`io.github.robinlidberg-dot/cap-shield`.
-
-Prefer a single file over a package?
-
-```bash
-curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
-```
-
-Then the command is `python` and the argument is the path to the file.
+Python 3.9+. Nothing else.
 
 The optional [SKILL.md](SKILL.md) tells an agent *when* to use these
 tools — and when not to.
+
+
+## No install at all
+
+The server is also reachable over HTTP:
+
+```
+https://cap-shield-robin.fly.dev/mcp
+```
+
+Add it as a remote MCP server in any client that supports them, or open it
+in an MCP inspector. `measure_traffic` and `list_packages` work with no
+account and no key — you can measure your own traffic in a browser without
+installing anything.
+
+`remember` and `assemble_context` need a key and are not open over HTTP
+yet; they answer with what to do instead.
+
+## Dictionaries improve on your traffic — and only if they win
+
+A customer's dictionary is trained on their own traffic, in their own
+isolated store. A new version is adopted **only if it measures better on
+held-out data neither version was trained on.** A retraining that does not
+win is rejected and logged, and the old dictionary stays.
+
+Old versions are never deleted, so packets compressed under any earlier
+version still unpack.
+
 
 ## Tools
 
