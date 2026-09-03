@@ -184,31 +184,40 @@ Follow the same rules the service follows about itself:
 - **Say when something has not been measured.** `measured: false` is an
   answer, not a failure.
 
-## Dictionaries improve on the customer's own traffic
+## Memory is versioned, and updates are stored as deltas
 
-The shared dictionaries are trained on open corpora. A customer's own
-dictionary is trained on their traffic, in their own isolated store, and
-is never shared or merged into the curated ones.
+An entry can be updated without storing it again in full. Every fifth
+version is complete; the ones between are stored as a delta against the
+previous version. A SHA-256 of the original is kept per version and
+checked on read, so the chain is lossless, and no version depends on
+more than four others.
 
-**The part worth knowing:** a new version is adopted only if it measures
-better on held-out data that neither version was trained on. A
-retraining that does not win is rejected, the old dictionary stays, and
-the rejection is logged with both figures.
+This matters because agent memory is mostly small edits to text that
+already exists. Storing each edit in full is what makes memory expensive
+to keep.
 
-That gate matters because a dictionary trained on too little or too
-skewed traffic measures WORSE than none — the payload falls back to raw
-and the header is still added.
+Each entry also picks its own compression strategy by size — and if
+compression does not pay off, the entry is stored RAW and the response
+says so. Same rule as the degraded share on the wire: report it rather
+than hide it.
 
-Old versions are never deleted, so packets compressed under any earlier
-version still unpack.
+## What the response tells you — use it
 
-Retraining is manual by default (`POST /api/v1/catalog/mature`).
-Automatic retraining exists but is off unless the customer has enabled
-both `training` and `auto_mature`, and it consumes quota.
+A saving you cannot audit is a saving the customer has to take on trust.
+The response says more than the total, and the extra fields are what make
+the number checkable:
 
-**Do not promise a figure for this.** What maturity gains depends on the
-customer's traffic. The response reports `old_saving_pct`,
-`new_saving_pct` and `improvement_pp` — quote those, not an estimate.
+- `method` on every hit — vector or lexical, so you can see WHICH
+  mechanism found that entry
+- `baseline_tokens` — what the whole history would have cost, in the same
+  format. Without it the saving cannot be computed, only claimed
+- `candidates_before_autocut` and `autocut_removed` — what relevance
+  scoring dropped
+- `deduplicated` — near-identical entries collapsed rather than sent twice
+- `skipped_too_big` and `item_ids`
+
+**When reporting a saving, quote `baseline_tokens` alongside it.** A
+percentage without its baseline is not a measurement.
 
 ## Everything else
 

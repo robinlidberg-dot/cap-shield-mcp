@@ -100,6 +100,31 @@ The descriptions above are copied verbatim from the server. If they ever
 differ from what `tools/list` returns, the server is right and this file
 is stale.
 
+## Memory is versioned, and updates are stored as deltas
+
+An entry can be updated without storing it again in full. Every fifth
+version is complete; the ones between are stored as a delta against the
+previous version, with a SHA-256 checked on read. Lossless, and no
+version depends on more than four others.
+
+Agent memory is mostly small edits to text that already exists. Storing
+each edit in full is what makes it expensive to keep.
+
+Entries also pick their own compression strategy by size — and if
+compression does not pay off, the entry is stored **raw** and the
+response says so.
+
+## The response is auditable
+
+A saving you cannot check is a saving you have to take on trust. Every
+hit carries `method` — vector or lexical — so you can see which mechanism
+found it. Every assembly reports `baseline_tokens` (what the whole
+history would have cost, in the same format), `candidates_before_autocut`,
+`autocut_removed`, `deduplicated` and `skipped_too_big`.
+
+Measuring the baseline in a different format once produced a 39-point
+error. The formats are identical for that reason.
+
 ## What the numbers mean
 
 Compression saves **bytes over the wire**. Selection saves **tokens in
