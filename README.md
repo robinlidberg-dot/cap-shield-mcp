@@ -1,4 +1,4 @@
-# cap-shield MCP server
+# CAP-Shield MCP server
 
 Context selection and compression for AI agents — with the recall
 measured, not claimed.
