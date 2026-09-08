@@ -70,7 +70,9 @@ The response has four parts, and **three of them can be bad news**:
 
 - `individual.saving_pct` — one message at a time. Can be NEGATIVE.
 - `individual.degraded` — how many messages came out LARGER. Report this
-  number every time, including when it is zero.
+  number every time, including when it is zero. If it is high AND
+  batching is possible, batch — do not report the weak number and stop
+  there; the batched figure is what the agent should act on.
 - `batched.saving_pct` — the same messages packed together.
 - `token_saving` — a different mechanism entirely. `measured: false`
   means there was not enough content, not that it failed.
@@ -109,7 +111,8 @@ pip install cap-shield
 }
 ```
 
-The `env` block is only needed for the two tools that use memory.
+The `env` block is only needed for the three tools that require a key
+(`remember`, `assemble_context`, `issue_pass`).
 
 Or take the server as a single file, if a package is unwelcome:
 
@@ -119,7 +122,7 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 
 The server itself imports nothing outside the standard library.
 
-Five tools:
+Six tools:
 
 | Tool | Purpose | Account |
 |---|---|---|
@@ -128,9 +131,14 @@ Five tools:
 | `remember` | Store a memory entry | Yes |
 | `assemble_context` | Retrieve the relevant entries, not the whole history | Yes |
 | `get_account` | Obtain a key | No |
+| `issue_pass` | Issue a short-lived signed credential a third party can verify independently | Yes |
 
 `assemble_context` calls no model. It selects and returns; the caller
 decides what to do with the result.
+
+`issue_pass` is the same `POST /api/v1/pass` endpoint described under
+"Proving identity to someone besides us" below — reachable here as a
+proper MCP tool, not only over REST.
 
 ## Choosing a package
 
@@ -161,7 +169,9 @@ content is not.
 
 Optional padding (`padding=PADDING_STANDARD`) rounds to a 64-byte step
 and closes it, for under two bytes a message. **It is off by default** —
-say so rather than let anyone assume it is on.
+say so rather than let anyone assume it is on. If you batch across a
+trust boundary, turning padding on is not optional — it is the
+difference between the name Shield meaning something here and not.
 
 Individual packing does not have this problem at all.
 
@@ -201,6 +211,25 @@ compression does not pay off, the entry is stored RAW and the response
 says so. Same rule as the degraded share on the wire: report it rather
 than hide it.
 
+`remember` takes an optional `ttl_days`. After that many days,
+`assemble_context` stops selecting the entry — it is not deleted, only
+no longer chosen, the same distinction the archive guarantee draws
+between "never deleted" and "actively selected". Omit it and an entry
+is eligible forever, as before this field existed. Use it for anything
+whose truth decays with time (a status update, a temporary instruction,
+an in-progress fact that will be superseded) rather than letting it
+compete with current information indefinitely.
+
+## Multi-agent setups: one namespace per role
+
+`remember` and `assemble_context` already take a `namespace` argument.
+For a manager agent coordinating sub-agents, giving each role its own
+namespace (`coder`, `finance`, `support`, ...) is the isolation a
+multi-agent handoff needs, with no new tool: the manager writes into the
+namespace that belongs to the recipient, and each sub-agent only ever
+calls `assemble_context` against its own. This is the same isolation
+mechanism already used between tenants, one level down.
+
 ## What the response tells you — use it
 
 A saving you cannot audit is a saving the customer has to take on trust.
@@ -218,6 +247,75 @@ the number checkable:
 
 **When reporting a saving, quote `baseline_tokens` alongside it.** A
 percentage without its baseline is not a measurement.
+
+## Dictionaries improve on the customer's own traffic
+
+The shared dictionaries are trained on open corpora. A customer's own
+dictionary is trained on their traffic, in their own isolated store, and
+is never shared or merged into the curated ones.
+
+**The part worth knowing:** a new version is adopted only if it measures
+better on held-out data that neither version was trained on. A
+retraining that does not win is rejected, the old dictionary stays, and
+the rejection is logged with both figures.
+
+That gate matters because a dictionary trained on too little or too
+skewed traffic measures WORSE than none — the payload falls back to raw
+and the header is still added.
+
+Old versions are never deleted, so packets compressed under any earlier
+version still unpack.
+
+Retraining is manual by default (`POST /api/v1/catalog/mature`).
+Automatic retraining exists but is off unless the customer has enabled
+both `training` and `auto_mature`, and it consumes quota.
+
+**Do not promise a figure for this.** What maturity gains depends on the
+customer's traffic. The response reports `old_saving_pct`,
+`new_saving_pct` and `improvement_pp` — quote those, not an estimate.
+
+## Portability
+
+Dictionary versions are never deleted, and the guarantee does not rest
+on CAP-Shield still existing: the archive export carries the dictionary
+binaries, and `cap_unpack.py` runs standalone — no gateway, no network,
+no account. It is served without a token, because whoever needs it most
+is whoever no longer has one.
+
+What does NOT come with it: the memory store, vector selection, autocut,
+package maturity, or the measurement apparatus. Those are the service,
+not a file you export once and stop paying for.
+
+## Proving identity to someone besides us
+
+`issue_pass` (or `POST /api/v1/pass` over REST) issues a short-lived
+(15 minute) signed credential that a THIRD PARTY can verify
+independently against `/.well-known/jwks.json` — no CAP-Shield account
+needed on their end. Same Bearer token as every other endpoint here, no
+new onboarding.
+
+```json
+{"acts_for": "who the agent is acting for", "audience": "optional", "scope": {"can_read": "invoice_json", "max_budget_usd": 500}}
+```
+
+It does **not** validate `acts_for` or `scope` against reality. It
+attests only that the holder of the key claimed it, at that moment, with
+a record in the hash-chained audit log. Report that plainly if
+describing it — claiming more would be exactly the kind of unmeasured
+assertion this document argues against everywhere else. `scope` is
+optional and freeform; omit it and the pass looks exactly as it did
+before the field existed.
+
+**Request the pass right before the hand-off, not at the start of a
+workflow that includes a wait.** A pass issued before a human-approval
+gate can expire before it is ever shown to the recipient — there is no
+refresh, only requesting a new one, which works at any time with the
+same key. Fifteen minutes is short by design; treat it as "ask right
+when you need it," not "ask ahead, just in case."
+
+No blockchain, no NFT, no wallet, no revocation list — a pass without
+one must be short-lived, since a revocation list is one more service
+that would need to stay up for the pass to be checkable at all.
 
 ## Everything else
 
