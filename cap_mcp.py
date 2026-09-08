@@ -122,6 +122,14 @@ VERKTYG = [
                         "Optional. Same id overwrites the entry. Omit for "
                         "a generated one."),
                 },
+                "ttl_days": {
+                    "type": "integer",
+                    "description": (
+                        "Optional. After this many days, assemble_context "
+                        "stops selecting this entry. It is not deleted, "
+                        "just no longer chosen. Omit to keep it eligible "
+                        "indefinitely, as before this field existed."),
+                },
             },
             "required": ["namespace", "text"],
         },
@@ -168,6 +176,39 @@ VERKTYG = [
             "required": ["email"],
         },
     },
+    {
+        "name": "issue_pass",
+        "description": (
+            "Issue a short-lived (15 minute) signed credential (a JWT) "
+            "stating who the caller acts for. REQUIRES A KEY. Anyone can "
+            "verify it independently against /.well-known/jwks.json — "
+            "without calling CAP-Shield again. 'acts_for' and 'scope' are "
+            "NOT validated against reality: the pass only attests that the "
+            "key holder claimed this, at this time, and that the claim is "
+            "recorded in the audit chain. This is identity and claimed "
+            "authorization, not a payment or access-control mechanism."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "acts_for": {
+                    "type": "string",
+                    "description": "Who the agent claims to act for, e.g. 'acme-corp/procurement'.",
+                },
+                "audience": {
+                    "type": "string",
+                    "description": "Optional. Who the pass is shown to.",
+                },
+                "scope": {
+                    "type": "object",
+                    "description": (
+                        "Optional, freeform, NOT validated. Example: "
+                        '{"can_read": "invoice_json", "max_budget_usd": 500}.'),
+                },
+            },
+            "required": ["acts_for"],
+        },
+    },
 ]
 
 
@@ -175,21 +216,88 @@ def _nyckel() -> str:
     return os.environ.get("CAP_SHIELD_API_KEY", "").strip()
 
 
+# ----------------------------------------------------------------------
+# Utbytbar transport
+#
+# Servern kan köras på två sätt:
+#
+#   1. Fristående, på användarens dator. Då gör den HTTP mot BAS, precis
+#      som förut. Detta är standardläget och ändras inte.
+#
+#   2. Inne i gatewayen, bakom POST /mcp. Då vore ett HTTP-anrop ett
+#      anrop till den EGNA processen — det fungerar, men en tidsgräns
+#      mot sig själv är svår att felsöka.
+#
+# Alternativet hade varit en andra dispatch som anropar core direkt. Då
+# finns två kodvägar som gör samma sak och kan glida isär. DELPAKET
+# ligger i tre kopior av precis det skälet, och det upptäcktes av en
+# slump.
+#
+# Med kroken: en dispatch, en verktygstabell, två backends.
+# ----------------------------------------------------------------------
+_UTFORARE = None
+
+
+_NYCKEL_FOR_ANROP = None
+
+
+def satt_nyckel_for_anrop(nyckel: str | None) -> None:
+    """Nyckel för det pågående anropet, i stället för miljövariabeln.
+
+    Sätts av gatewayen när servern körs bakom POST /mcp. I stdio-läget
+    rörs den aldrig, och _nyckel() läser miljön som förut.
+    """
+    global _NYCKEL_FOR_ANROP
+    _NYCKEL_FOR_ANROP = nyckel
+
+
+def satt_utforare(fn) -> None:
+    """Byt ut transporten.
+
+    fn(vag, kropp, metod, nyckel) -> dict
+
+    Sätts av gatewayen vid uppstart. Rörs aldrig i stdio-läget — sätts
+    ingen utförare går allt via urllib som förut.
+    """
+    global _UTFORARE
+    _UTFORARE = fn
+
+
 def _anrop(vag: str, kropp: dict | None = None, metod: str = "POST",
-           kraver_nyckel: bool = True) -> dict:
-    """HTTP mot gatewayen. Använder urllib — inget extra beroende."""
+           kraver_nyckel: bool = True, nyckel: str | None = None) -> dict:
+    """Anrop mot gatewayen.
+
+    Går via _UTFORARE om en satts, annars HTTP med urllib — inget extra
+    beroende.
+
+    `nyckel` åsidosätter miljövariabeln. Behövs när servern körs bakom
+    POST /mcp och nyckeln kommer ur Authorization-huvudet på just den
+    förfrågan i stället för ur processens miljö. Utelämnas den läses
+    miljön, som förut.
+    """
+    n = (nyckel if nyckel is not None
+         else _NYCKEL_FOR_ANROP or _nyckel())
+
+    if kraver_nyckel and not n:
+        return {"error": (
+            "No API key. Set CAP_SHIELD_API_KEY in the server's env, "
+            "or call get_account to obtain one. The measure_traffic "
+            "and list_packages tools work without a key.")}
+
+    if _UTFORARE is not None:
+        try:
+            return _UTFORARE(vag, kropp, metod, n)
+        except Exception as exc:
+            # Utföraren får aldrig fälla servern. Ett fel här ska se ut
+            # som ett fel från API:t, inte som en krasch i transporten.
+            return {"error": f"Internal call failed: {exc}"}
+
     import urllib.error
     import urllib.request
 
     huvuden = {"Content-Type": "application/json",
                "User-Agent": f"cap-shield-mcp/{VERSION}"}
     if kraver_nyckel:
-        n = _nyckel()
-        if not n:
-            return {"error": (
-                "No API key. Set CAP_SHIELD_API_KEY in the server's env, "
-                "or call get_account to obtain one. The measure_traffic "
-                "and list_packages tools work without a key.")}
         huvuden["Authorization"] = f"Bearer {n}"
 
     data = json.dumps(kropp).encode("utf-8") if kropp is not None else None
@@ -221,10 +329,13 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
 
     if namn == "remember":
         import uuid
-        return _anrop("/api/v1/memory/put", {
+        kropp = {
             "namespace": arg["namespace"],
             "item_id": arg.get("item_id") or uuid.uuid4().hex[:16],
-            "text": arg["text"]})
+            "text": arg["text"]}
+        if arg.get("ttl_days"):
+            kropp["ttl_days"] = arg["ttl_days"]
+        return _anrop("/api/v1/memory/put", kropp)
 
     if namn == "assemble_context":
         return _anrop("/api/v1/memory/assemble", {
@@ -236,6 +347,14 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
         if arg.get("traffic"):
             kropp["traffic"] = arg["traffic"]
         return _anrop("/api/v1/beta-signup", kropp, kraver_nyckel=False)
+
+    if namn == "issue_pass":
+        kropp = {"acts_for": arg["acts_for"]}
+        if arg.get("audience"):
+            kropp["audience"] = arg["audience"]
+        if arg.get("scope"):
+            kropp["scope"] = arg["scope"]
+        return _anrop("/api/v1/pass", kropp)
 
     return {"error": f"Unknown tool: {namn}"}
 
