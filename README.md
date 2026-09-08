@@ -1,4 +1,4 @@
-# CAP-shield MCP server
+# CAP-Shield MCP server
 
 Context selection and compression for AI agents — with the recall
 measured, not claimed.
@@ -22,7 +22,7 @@ Recall@10 is the strict measure: a question counts only when ALL gold
 sessions were found. Finding half the answer means the agent answers
 confidently on half a basis.
 
-**Two of the five tools need no account.** Measure first, decide after.
+**Two of the six tools need no account.** Measure first, decide after.
 
 ## Install
 
@@ -135,7 +135,7 @@ longer has an account.
 
 ## Status
 
-Beta. Server version 0.1.0.
+Beta. Server version 0.5.0.
 
 Docs: https://cap-shield-robin.fly.dev/docs/quickstart
 Console: https://cap-shield-console.lovable.app

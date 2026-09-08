@@ -47,7 +47,7 @@ from typing import Any
 
 BAS = os.environ.get("CAP_SHIELD_URL", "https://cap-shield-robin.fly.dev")
 PROTOKOLL = "2024-11-05"
-VERSION = "0.1.0"
+VERSION = "0.5.0"
 
 
 # ----------------------------------------------------------------------
