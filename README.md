@@ -13,10 +13,7 @@ raising inference cost by over 20 %. Around two thirds of production
 agent failures trace to context problems, not to the model being
 incapable.
 
-So the question is not how much you cut. It is whether what you kept was
-enough — and that is measured here, on a benchmark we did not choose:
-LongMemEval-S, 500 questions. Recall@10 of 93.8 % against a lexical
-baseline of 51.9 %.
+So the question is not how much you cut. It is whether what you kept was enough — and that is measured here, on a benchmark we did not choose: LongMemEval-S, 500 questions. Recall@10 of 97.1 % against a lexical baseline of 51.9 % (measured 2026-09-28 — figures update as retrieval does; fetch `.well-known/cap-shield.json` for the current number rather than trusting this file).
 
 Recall@10 is the strict measure: a question counts only when ALL gold
 sessions were found. Finding half the answer means the agent answers
@@ -70,11 +67,63 @@ Get an account and an API key. Requires an email address. The key is returned ON
 
 ### `issue_pass` · *requires a key*
 
-Issue a short-lived (15 minute) signed credential (a JWT) stating who the caller acts for. REQUIRES A KEY. Anyone can verify it independently against /.well-known/jwks.json — without calling CAP-Shield again. 'acts_for' and 'scope' are NOT validated against reality: the pass only attests that the key holder claimed this, at this time, and that the claim is recorded in the audit chain. This is identity and claimed authorization, not a payment or access-control mechanism.
+**Agent identity / agent passport.** Issue a short-lived (15 minute) signed credential (a JWT) stating who the caller acts for. REQUIRES A KEY. Anyone can verify it independently against /.well-known/jwks.json — without calling CAP-Shield again. 'acts_for' and 'scope' are NOT validated against reality: the pass only attests that the key holder claimed this, at this time, and that the claim is recorded in the audit chain. This is identity and claimed authorization, not a payment or access-control mechanism.
 
 The descriptions above are copied verbatim from the server. If they ever
 differ from what `tools/list` returns, the server is right and this file
 is stale.
+
+## Optional: LLM escalation for the hardest questions
+
+Retrieval and compression above never call a model. `assemble_context`
+also returns `escalate_recommended: true` on one specific category of
+question — multi-step counting ("how many times did I mention X?"),
+summing amounts spread across several memories, reconstructing
+chronological order across multiple events — where the answer is not
+sitting in any single entry and has to be assembled. Plain retrieval
+gets these right most of the time; this flag is for the rest.
+
+What you do with that flag is yours to decide. CAP-Shield never spends
+your tokens or sees your model key.
+
+`cap_escalate_helper.py` is a reference implementation of that one
+extra step: drop it into your own pipeline, call it with your own
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, only for the questions
+CAP-Shield flagged.
+
+```bash
+pip install anthropic   # or: pip install openai
+export ANTHROPIC_API_KEY=...
+```
+
+```python
+from cap_escalate_helper import eskalera_om_behovs
+
+cap_svar = assemble_context(...)   # whatever CAP-Shield returned you
+svar = eskalera_om_behovs(cap_svar, fraga="How many times did I mention X?",
+                           modell="claude")   # or modell="gpt-5-mini"
+print(svar["svar"])
+```
+
+If `escalate_recommended` is false, nothing is sent to any model — the
+function returns immediately, so it is safe to call unconditionally on
+every response; it only spends an API call when CAP-Shield actually
+asked for one.
+
+`python cap_escalate_helper.py --demo` shows exactly what would be sent,
+no key required.
+
+A more targeted entry point, `eskalera_om_behovs_v5`, asks the model to
+only extract the raw pieces (amounts, dates, event names) and lets
+plain Python do the counting, summing or sorting — removing an entire
+class of arithmetic/sequencing mistakes a model can make answering in
+free text. It is the version used in our own benchmark validation of
+this feature.
+
+Reproducing a number we published against your own run requires the
+current version of this file — the prompts and matching logic behind
+it are still actively tuned, and an older local copy can score
+meaningfully differently.
 
 ## What the numbers mean
 
