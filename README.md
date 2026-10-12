@@ -19,7 +19,7 @@ Recall@10 is the strict measure: a question counts only when ALL gold
 sessions were found. Finding half the answer means the agent answers
 confidently on half a basis.
 
-**Two of the six tools need no account.** Measure first, decide after.
+**Two of the eight tools need no account.** Measure first, decide after.
 
 ## Install
 
@@ -98,6 +98,14 @@ Store a memory entry for later retrieval. REQUIRES A KEY. This does not call any
 ### `assemble_context` · *requires a key*
 
 Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY. Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why.
+
+### `pack_batch` · *requires a key*
+
+Pack several messages into ONE compressed packet instead of packing them one at a time. REQUIRES A KEY. Worth it for many small/medium messages (the per-message header cost is paid once per batch, and zstd shares context across them) — for a single message this has no advantage. Returns packet_b64 (hand it to unpack_batch to get the messages back) plus the measured byte savings versus packing each message separately. SECURITY: only batch messages that already share the SAME trust boundary (same tenant/agent — nothing attacker-influenced mixed in with a secret). Batched messages share one compression context, which can leak size-based information between them (a CRIME/BREACH-style side channel). There is no padding mitigation on this endpoint today, so trust-boundary separation is the only protection — don't rely on padding.
+
+### `unpack_batch` · *requires a key*
+
+Unpack a batch packet made by pack_batch (or by the /api/v1/pack-batch endpoint) back into the exact original list of messages, in order. REQUIRES A KEY. Not for a packet made by the single-message pack endpoint — that is a different format and this will reject it.
 
 ### `get_account`
 
