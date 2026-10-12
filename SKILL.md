@@ -111,8 +111,8 @@ pip install cap-shield
 }
 ```
 
-The `env` block is only needed for the three tools that require a key
-(`remember`, `assemble_context`, `issue_pass`).
+The `env` block is only needed for the tools that require a key
+(`remember`, `assemble_context`, `pack_batch`, `unpack_batch`, `issue_pass`).
 
 Or take the server as a single file, if a package is unwelcome:
 
@@ -122,7 +122,7 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 
 The server itself imports nothing outside the standard library.
 
-Six tools:
+Eight tools:
 
 | Tool | Purpose | Account |
 |---|---|---|
@@ -130,11 +130,19 @@ Six tools:
 | `list_packages` | Domain packages with measured figures | No |
 | `remember` | Store a memory entry | Yes |
 | `assemble_context` | Retrieve the relevant entries, not the whole history | Yes |
+| `pack_batch` | Pack several messages into one compressed packet | Yes |
+| `unpack_batch` | Unpack a packet made by `pack_batch` back into the original messages | Yes |
 | `get_account` | Obtain a key | No |
 | `issue_pass` | Issue a short-lived signed credential a third party can verify independently | Yes |
 
 `assemble_context` calls no model. It selects and returns; the caller
 decides what to do with the result.
+
+`pack_batch`/`unpack_batch` are the same `POST /api/v1/pack-batch`
+mechanism described under "Batching has a security condition" below —
+reachable here as proper MCP tools, not only over REST. The same
+trust-boundary rule applies: only batch messages that already share one
+(same tenant/agent, nothing attacker-influenced mixed in with a secret).
 
 `issue_pass` is the same `POST /api/v1/pass` endpoint described under
 "Proving identity to someone besides us" below — reachable here as a

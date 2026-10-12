@@ -43,6 +43,44 @@ Python 3.9+. Nothing else.
 The optional [SKILL.md](SKILL.md) tells an agent *when* to use these
 tools — and when not to.
 
+## Use it from Claude (Claude.ai, Claude Desktop, or Cowork) — no download
+
+The server is also reachable directly over HTTP, so a hosted Claude
+client can connect to it without installing anything locally.
+
+In Claude: **Settings → Connectors → Add custom connector**, and enter
+the server URL:
+
+```
+https://cap-shield-robin.fly.dev/mcp
+```
+
+Under **Authentication**, choose **No sign-in** — this server is
+authenticated with an API key, not OAuth (OAuth support is not built
+yet; see Status below). Claude will warn that anyone with the URL can
+use the connector without sign-in — that warning is accurate, and is
+exactly why the two free tools below need no key at all, while the rest
+do.
+
+**`measure_traffic` and `list_packages` work immediately**, with no
+header and no account — nothing more to configure.
+
+**To use the account tools** (`remember`, `assemble_context`,
+`pack_batch`, `unpack_batch`, `issue_pass`): get a key first
+(`get_account`, or the console at
+https://cap-shield-console.lovable.app), then add it under **Request
+headers** in the same connector dialog:
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer YOUR_KEY_HERE` |
+
+The `Bearer ` prefix is required — a bare key without it is rejected
+with `NYCKEL_KRAVS`. This is a standard bearer-token header, so the same
+two fields should work in any MCP client that lets you add a custom
+request header to a remote server, not just Claude — that is just the
+one this has actually been tested against.
+
 ## Tools
 
 ### `measure_traffic` · *no account*
