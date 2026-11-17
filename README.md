@@ -19,7 +19,7 @@ Recall@10 is the strict measure: a question counts only when ALL gold
 sessions were found. Finding half the answer means the agent answers
 confidently on half a basis.
 
-**Two of the eight tools need no account.** Measure first, decide after.
+**Two of the nine tools need no account.** Measure first, decide after.
 
 ## Install
 
@@ -66,7 +66,8 @@ do.
 header and no account — nothing more to configure.
 
 **To use the account tools** (`remember`, `assemble_context`,
-`pack_batch`, `unpack_batch`, `issue_pass`): get a key first
+`assemble_escalation_context`, `pack_batch`, `unpack_batch`,
+`issue_pass`): get a key first
 (`get_account`, or the console at
 https://cap-shield-console.lovable.app), then add it under **Request
 headers** in the same connector dialog:
@@ -99,6 +100,10 @@ Store a memory entry for later retrieval. REQUIRES A KEY. This does not call any
 
 Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY. Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why.
 
+### `assemble_escalation_context` · *requires a key*
+
+Retrieve a WIDE context for a question your model could not answer from assemble_context. REQUIRES A KEY. Use it when assemble_context returned escalate_recommended=true, or when the answer depends on dates, counts or several sessions. This does not call a model itself. Returns 'context' (up to token_budget, default 150 000 tokens: lower it if your model's window is smaller), where each stored entry starts with a header '--- Session YYYY/MM/DD (Ddd) HH:MM ---' giving when it was stored, and 'utelamnat_kontext': lower-ranked entries that were left out, in the same format. Read those only if the answer is still missing from 'context'. Python users can pass the whole response to cap_escalate_helper.eskalera_om_behovs_v6().
+
 ### `pack_batch` · *requires a key*
 
 Pack several messages into ONE compressed packet instead of packing them one at a time. REQUIRES A KEY. Worth it for many small/medium messages (the per-message header cost is paid once per batch, and zstd shares context across them) — for a single message this has no advantage. Returns packet_b64 (hand it to unpack_batch to get the messages back) plus the measured byte savings versus packing each message separately. SECURITY: only batch messages that already share the SAME trust boundary (same tenant/agent — nothing attacker-influenced mixed in with a secret). Batched messages share one compression context, which can leak size-based information between them (a CRIME/BREACH-style side channel). There is no padding mitigation on this endpoint today, so trust-boundary separation is the only protection — don't rely on padding.
@@ -119,57 +124,71 @@ The descriptions above are copied verbatim from the server. If they ever
 differ from what `tools/list` returns, the server is right and this file
 is stale.
 
-## Optional: LLM escalation for the hardest questions
+## Answers from memory, with your own model
 
-Retrieval and compression above never call a model. `assemble_context`
-also returns `escalate_recommended: true` on one specific category of
-question — multi-step counting ("how many times did I mention X?"),
-summing amounts spread across several memories, reconstructing
-chronological order across multiple events — where the answer is not
-sitting in any single entry and has to be assembled. Plain retrieval
-gets these right most of the time; this flag is for the rest.
+Retrieval and compression above never call a model. For questions the
+narrow selection cannot answer — dates ("last Saturday", "how many days
+ago"), counts and sums across sessions, a detail that ranked low —
+`assemble_escalation_context` (REST: `POST /api/v1/memory/assemble-escalation`)
+returns a much wider context with a date header on every session, plus the
+sessions that were left out.
 
-What you do with that flag is yours to decide. CAP-Shield never spends
-your tokens or sees your model key.
-
-`cap_escalate_helper.py` is a reference implementation of that one
-extra step: drop it into your own pipeline, call it with your own
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, only for the questions
-CAP-Shield flagged.
+`cap_escalate_helper.py` (with `cap_fokuslasare.py`) answers from it with
+**your own** model key, from your machine. CAP-Shield never spends your
+tokens and never sees your key. Both files are in this repository and in
+the `cap-shield` package on PyPI (0.6.0 and later). Standard library only;
+`openai` or `anthropic` is imported when it is used.
 
 ```bash
-pip install anthropic   # or: pip install openai
-export ANTHROPIC_API_KEY=...
+pip install cap-shield openai     # or: anthropic
+export OPENAI_API_KEY=...
 ```
 
 ```python
-from cap_escalate_helper import eskalera_om_behovs
+from cap_shield import CapShield
+from cap_escalate_helper import eskalera_om_behovs_v6
 
-cap_svar = assemble_context(...)   # whatever CAP-Shield returned you
-svar = eskalera_om_behovs(cap_svar, fraga="How many times did I mention X?",
-                           modell="claude")   # or modell="gpt-5-mini"
+cap = CapShield(api_key="cap_live_...")
+fraga = "Which bike did I fix last weekend?"
+ctx = cap.escalation_context("support", fraga)
+svar = eskalera_om_behovs_v6(ctx, fraga, modell="openai",      # or "anthropic"
+                             modell_namn="gpt-6-luna",
+                             dagens_datum="2026/11/16")       # when the question is asked
 print(svar["svar"])
 ```
 
-If `escalate_recommended` is false, nothing is sent to any model — the
-function returns immediately, so it is safe to call unconditionally on
-every response; it only spends an API call when CAP-Shield actually
-asked for one.
+Over MCP, call `assemble_escalation_context` and let your own model read
+the result.
 
-`python cap_escalate_helper.py --demo` shows exactly what would be sent,
-no key required.
+### How often the answer is right
 
-A more targeted entry point, `eskalera_om_behovs_v5`, asks the model to
-only extract the raw pieces (amounts, dates, event names) and lets
-plain Python do the counting, summing or sorting — removing an entire
-class of arithmetic/sequencing mistakes a model can make answering in
-free text. It is the version used in our own benchmark validation of
-this feature.
+Measured 2026-11-16 with `gpt-6-luna` answering. The full method, the
+answer to every question type, and each answer that was reviewed by hand
+are published under `memory_layer.answer_benchmark` in
+https://cap-shield-robin.fly.dev/.well-known/cap-shield.json — fetch the
+current figures there rather than trusting this file.
 
-Reproducing a number we published against your own run requires the
-current version of this file — the prompts and matching logic behind
-it are still actively tuned, and an older local copy can score
-meaningfully differently.
+| Test | This version | Previous version |
+|---|---|---|
+| LongMemEval-S, 500 questions, judged automatically | 96.6 % | 88.0 % |
+| After manual review of 10 answers (each listed) | 98.6 % | |
+| LoCoMo, 100 questions it was never tuned on | 80 / 100 | 81 / 100 |
+
+Three caveats, which belong next to those figures wherever they are
+quoted:
+
+- **Developed against the same 500 questions.** The rules in the helper
+  were written while studying misses on that set. On LoCoMo, which they
+  were never tuned on, they gave no gain over the previous version.
+- **The judge is not the GPT-4o from the LongMemEval paper**, so the
+  figures are not directly comparable to published LongMemEval scores.
+- **They depend on the answer model.**
+
+Six of the ten reviewed answers meet the official preference rubric but
+were rejected by the judge model. In four, the benchmark's gold answer
+contradicts the conversation history; we keep the answer the history
+supports and list the case, rather than teach the model to agree with a
+wrong key.
 
 ## What the numbers mean
 
@@ -230,7 +249,7 @@ longer has an account.
 
 ## Status
 
-Beta. Server version 0.5.0.
+Beta. MCP server 0.7.0, Python package 0.6.0.
 
 Docs: https://cap-shield-robin.fly.dev/docs/quickstart
 Console: https://cap-shield-console.lovable.app

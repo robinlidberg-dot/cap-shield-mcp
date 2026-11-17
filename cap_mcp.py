@@ -47,7 +47,7 @@ from typing import Any
 
 BAS = os.environ.get("CAP_SHIELD_URL", "https://cap-shield-robin.fly.dev")
 PROTOKOLL = "2024-11-05"
-VERSION = "0.5.0"
+VERSION = "0.7.0"  # 2026-11-15: + assemble_escalation_context (steg 101)
 
 
 # ----------------------------------------------------------------------
@@ -152,6 +152,69 @@ VERKTYG = [
                 "query": {"type": "string",
                           "description": "What you need context about."},
                 "token_budget": {"type": "integer", "default": 2000},
+                "reduce": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Opt-in (FAS L): shorten the assembled context "
+                        "with a small, local, task-agnostic model before "
+                        "it is returned, to lower your own model's token "
+                        "cost. Requires tenant consent for "
+                        "context_reduction (set via /api/v1/gdpr/"
+                        "consent) — otherwise the call is rejected with "
+                        "SAMTYCKE_KRAVS instead of silently ignoring the "
+                        "request. NOT query-aware: selection is driven "
+                        "by what is least informative in general, not "
+                        "by this query."
+                    ),
+                },
+                "target_tokens": {
+                    "type": "integer",
+                    "description": (
+                        "Only relevant together with reduce=true. How "
+                        "many tokens the assembled context should be "
+                        "shortened to. Omit for a default halving of "
+                        "what was actually retrieved."
+                    ),
+                },
+            },
+            "required": ["namespace", "query"],
+        },
+    },
+    {
+        "name": "assemble_escalation_context",
+        "description": (
+            "Retrieve a WIDE context for a question your model could not "
+            "answer from assemble_context. REQUIRES A KEY. Use it when "
+            "assemble_context returned escalate_recommended=true, or when "
+            "the answer depends on dates, counts or several sessions. "
+            "This does not call a model itself. Returns 'context' (up to "
+            "token_budget, default 150 000 tokens: lower it if your "
+            "model's window is smaller), where each stored entry starts "
+            "with a header '--- Session YYYY/MM/DD (Ddd) HH:MM ---' giving "
+            "when it was stored, and 'utelamnat_kontext': lower-ranked "
+            "entries that were left out, in the same format. Read those "
+            "only if the answer is still missing from 'context'. Python "
+            "users can pass the whole response to "
+            "cap_escalate_helper.eskalera_om_behovs_v6()."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string"},
+                "query": {"type": "string",
+                          "description": "The question to answer."},
+                "token_budget": {
+                    "type": "integer", "default": 150000,
+                    "description": (
+                        "Ceiling for 'context'. The default is what the "
+                        "method was measured with."),
+                },
+                "utelamnat_tokens": {
+                    "type": "integer", "default": 60000,
+                    "description": (
+                        "Ceiling for 'utelamnat_kontext'. 0 = none."),
+                },
             },
             "required": ["namespace", "query"],
         },
@@ -209,6 +272,71 @@ VERKTYG = [
             "required": ["acts_for"],
         },
     },
+    {
+        "name": "pack_batch",
+        "description": (
+            "Pack several messages into ONE compressed packet instead of "
+            "packing them one at a time. REQUIRES A KEY. Worth it for many "
+            "small/medium messages (the per-message header cost is paid "
+            "once per batch, and zstd shares context across them) — for a "
+            "single message this has no advantage. Returns packet_b64 "
+            "(hand it to unpack_batch to get the messages back) plus the "
+            "measured byte savings versus packing each message separately. "
+            "SECURITY: only batch messages that already share the SAME "
+            "trust boundary (same tenant/agent — nothing attacker-"
+            "influenced mixed in with a secret). Batched messages share one "
+            "compression context, which can leak size-based information "
+            "between them (a CRIME/BREACH-style side channel). There is no "
+            "padding mitigation on this endpoint today, so trust-boundary "
+            "separation is the only protection — don't rely on padding."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "texts": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": (
+                        "The messages to batch together, in order. Two or "
+                        "more — a single message gets no benefit."),
+                },
+                "dict_id": {
+                    "type": "string", "default": "finance",
+                    "description": (
+                        "Which trained dictionary to compress against. Call "
+                        "list_packages to see the options."),
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Optional. A label for audit/metrics.",
+                },
+            },
+            "required": ["texts"],
+        },
+    },
+    {
+        "name": "unpack_batch",
+        "description": (
+            "Unpack a batch packet made by pack_batch (or by the "
+            "/api/v1/pack-batch endpoint) back into the exact original list "
+            "of messages, in order. REQUIRES A KEY. Not for a packet made "
+            "by the single-message pack endpoint — that is a different "
+            "format and this will reject it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "packet_b64": {
+                    "type": "string",
+                    "description": "The packet_b64 returned by pack_batch.",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Optional. A label for audit/metrics.",
+                },
+            },
+            "required": ["packet_b64"],
+        },
+    },
 ]
 
 
@@ -229,9 +357,9 @@ def _nyckel() -> str:
 #      mot sig själv är svår att felsöka.
 #
 # Alternativet hade varit en andra dispatch som anropar core direkt. Då
-# finns två kodvägar som gör samma sak och kan glida isär. DELPAKET
-# ligger i tre kopior av precis det skälet, och det upptäcktes av en
-# slump.
+# finns två kodvägar som gör samma sak och kan glida isär. DELPAKET låg
+# i tre kopior av precis det skälet (åtgärdat i cap_package_ids.py),
+# och det upptäcktes av en slump.
 #
 # Med kroken: en dispatch, en verktygstabell, två backends.
 # ----------------------------------------------------------------------
@@ -338,9 +466,27 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
         return _anrop("/api/v1/memory/put", kropp)
 
     if namn == "assemble_context":
-        return _anrop("/api/v1/memory/assemble", {
+        kropp = {
             "namespace": arg["namespace"], "query": arg["query"],
-            "token_budget": arg.get("token_budget", 2000)})
+            "token_budget": arg.get("token_budget", 2000)}
+        # FAS L: utan detta skulle reduce/target_tokens tystna HÄR —
+        # _mcp_utforare()s SAMTYCKE_KRAVS-kontroll och själva
+        # reduktionen i memory_assemble() skulle aldrig nås från ett
+        # RIKTIGT MCP-anrop, bara från ett direkt Python-anrop till
+        # _mcp_utforare.
+        if arg.get("reduce"):
+            kropp["reduce"] = True
+        if arg.get("target_tokens"):
+            kropp["target_tokens"] = arg["target_tokens"]
+        return _anrop("/api/v1/memory/assemble", kropp)
+
+    if namn == "assemble_escalation_context":
+        kropp = {"namespace": arg["namespace"], "query": arg["query"]}
+        if arg.get("token_budget"):
+            kropp["token_budget"] = arg["token_budget"]
+        if arg.get("utelamnat_tokens") is not None:
+            kropp["utelamnat_tokens"] = arg["utelamnat_tokens"]
+        return _anrop("/api/v1/memory/assemble-escalation", kropp)
 
     if namn == "get_account":
         kropp = {"email": arg["email"]}
@@ -355,6 +501,19 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
         if arg.get("scope"):
             kropp["scope"] = arg["scope"]
         return _anrop("/api/v1/pass", kropp)
+
+    if namn == "pack_batch":
+        kropp = {"texts": arg.get("texts", []),
+                 "dict_id": arg.get("dict_id", "finance")}
+        if arg.get("agent_id"):
+            kropp["agent_id"] = arg["agent_id"]
+        return _anrop("/api/v1/pack-batch", kropp)
+
+    if namn == "unpack_batch":
+        kropp = {"packet_b64": arg["packet_b64"]}
+        if arg.get("agent_id"):
+            kropp["agent_id"] = arg["agent_id"]
+        return _anrop("/api/v1/unpack-batch", kropp)
 
     return {"error": f"Unknown tool: {namn}"}
 

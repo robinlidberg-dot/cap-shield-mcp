@@ -37,6 +37,10 @@ fix, and that is the reason to do it.
 - Compressing single short messages. Below roughly 100 bytes, the packet
   header and authenticated encryption cost more than compression saves.
   Batch instead.
+- Repeated tool-schema or system-prompt overhead across calls in the same
+  session. That is a caching problem, not a selection problem — the
+  provider's own prompt caching is what solves it. CAP-Shield does not
+  touch it.
 
 Say so plainly when one of these applies rather than reporting a small
 number as if it were a result.
@@ -112,7 +116,8 @@ pip install cap-shield
 ```
 
 The `env` block is only needed for the tools that require a key
-(`remember`, `assemble_context`, `pack_batch`, `unpack_batch`, `issue_pass`).
+(`remember`, `assemble_context`, `assemble_escalation_context`,
+`issue_pass`, `pack_batch`, `unpack_batch`).
 
 Or take the server as a single file, if a package is unwelcome:
 
@@ -122,7 +127,7 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 
 The server itself imports nothing outside the standard library.
 
-Eight tools:
+Nine tools:
 
 | Tool | Purpose | Account |
 |---|---|---|
@@ -130,19 +135,38 @@ Eight tools:
 | `list_packages` | Domain packages with measured figures | No |
 | `remember` | Store a memory entry | Yes |
 | `assemble_context` | Retrieve the relevant entries, not the whole history | Yes |
-| `pack_batch` | Pack several messages into one compressed packet | Yes |
-| `unpack_batch` | Unpack a packet made by `pack_batch` back into the original messages | Yes |
+| `assemble_escalation_context` | A wide, date-headed context for questions the normal selection could not answer | Yes |
 | `get_account` | Obtain a key | No |
 | `issue_pass` | Issue a short-lived signed credential a third party can verify independently | Yes |
+| `pack_batch` | Pack several messages into one compressed packet | Yes |
+| `unpack_batch` | Unpack a batch packet back into the original messages | Yes |
 
 `assemble_context` calls no model. It selects and returns; the caller
-decides what to do with the result.
+decides what to do with the result. It is not one-shot — if a specific
+detail turns out to be missing mid-session, call it again with a
+narrower query rather than assuming the first call was exhaustive.
 
-`pack_batch`/`unpack_batch` are the same `POST /api/v1/pack-batch`
-mechanism described under "Batching has a security condition" below —
-reachable here as proper MCP tools, not only over REST. The same
-trust-boundary rule applies: only batch messages that already share one
-(same tenant/agent, nothing attacker-influenced mixed in with a secret).
+### When the selected context is not enough
+
+`assemble_context` is built to send as little as possible. Some
+questions need more: dates ("last Saturday", "how many days ago"),
+counts across sessions, or a detail that ranked low. Then call
+`assemble_escalation_context` with the same namespace and the question.
+It returns a much wider `context` (by default up to 150 000 tokens: lower
+`token_budget` if your window is smaller), where every stored entry
+starts with `--- Session YYYY/MM/DD (Ddd) HH:MM ---`, and
+`utelamnat_kontext`: lower-ranked entries that were left out. Answer from
+`context`; read `utelamnat_kontext` only if the answer is still missing.
+Use the session headers for anything about time.
+
+Python callers can let the open-source helper in the same package do the
+answering with their own model key: pass the response to
+`cap_escalate_helper.eskalera_om_behovs_v6(response, question,
+modell="openai", modell_namn=..., dagens_datum="YYYY/MM/DD")`. How often that answer
+is right was measured, with the method and every manually reviewed
+answer listed, under `memory_layer.answer_benchmark` in
+`/.well-known/cap-shield.json`. Quote it from there, not from memory;
+the figures depend on the answer model.
 
 `issue_pass` is the same `POST /api/v1/pass` endpoint described under
 "Proving identity to someone besides us" below — reachable here as a
