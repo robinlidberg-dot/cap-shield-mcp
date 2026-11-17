@@ -341,6 +341,37 @@ VERKTYG = [
     },
 ]
 
+# Steg 111: titel och beteendeanteckningar per verktyg (MCP ToolAnnotations).
+# Claudes connectors-katalog och ChatGPT:s pluginkatalog kräver dem, och
+# en klient använder dem för att avgöra vad som får köras utan att fråga.
+# readOnlyHint: ändrar ingenting som användaren äger.
+# destructiveHint: kan skriva över eller ta bort (gäller bara om inte
+#   readOnly). Inget av verktygen raderar eller skriver över.
+# openWorldHint: når andra än CAP-Shields egen tjänst. Inget gör det.
+# Kvot och telemetri räknas upp av alla anrop; det räknas inte som att
+# ändra användarens data.
+ANNOTERINGAR = {
+    "measure_traffic": ("Measure possible savings", True, True),
+    "list_packages": ("List compression packages", True, True),
+    "remember": ("Store a memory entry", False, False),
+    "assemble_context": ("Retrieve relevant memory", True, True),
+    "assemble_escalation_context": ("Retrieve wide dated memory", True, True),
+    "get_account": ("Create account and API key", False, False),
+    "issue_pass": ("Issue a signed agent pass", False, False),
+    "pack_batch": ("Compress a batch of messages", True, True),
+    "unpack_batch": ("Decompress a batch packet", True, True),
+}
+for _v in VERKTYG:
+    _titel, _las, _idem = ANNOTERINGAR[_v["name"]]
+    _v["title"] = _titel
+    _v["annotations"] = {
+        "title": _titel,
+        "readOnlyHint": _las,
+        "destructiveHint": False,
+        "idempotentHint": _idem,
+        "openWorldHint": False,
+    }
+
 
 def _nyckel() -> str:
     return os.environ.get("CAP_SHIELD_API_KEY", "").strip()
