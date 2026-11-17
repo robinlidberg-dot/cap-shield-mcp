@@ -168,6 +168,13 @@ answer listed, under `memory_layer.answer_benchmark` in
 `/.well-known/cap-shield.json`. Quote it from there, not from memory;
 the figures depend on the answer model.
 
+What a smaller context saves in energy and time for the model reading it
+is measured with a GPU's own energy counter and published next to it,
+under `memory_layer.energy_benchmark`, with the hardware, the model,
+each budget's trade-off against how often all the evidence was included,
+and the caveats. Quote it from there too, with its caveats: it was
+measured on one GPU with one small model, not in a data centre.
+
 `issue_pass` is the same `POST /api/v1/pass` endpoint described under
 "Proving identity to someone besides us" below — reachable here as a
 proper MCP tool, not only over REST.
@@ -276,6 +283,10 @@ the number checkable:
   scoring dropped
 - `deduplicated` — near-identical entries collapsed rather than sent twice
 - `skipped_too_big` and `item_ids`
+- `budget_warning` — set when the best match did not fit the budget (or
+  nothing fit and the context is empty). It carries
+  `suggested_token_budget`: call again with that instead of sending an
+  empty or second-best context
 
 **When reporting a saving, quote `baseline_tokens` alongside it.** A
 percentage without its baseline is not a measurement.

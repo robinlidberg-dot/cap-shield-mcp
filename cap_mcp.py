@@ -143,7 +143,9 @@ VERKTYG = [
             "This does not call a model itself — it selects what to send. "
             "The budget is a ceiling, not a target: selection stops where "
             "relevance runs out, often well below it. The response says "
-            "how many entries were left behind and why."
+            "how many entries were left behind and why. If the response "
+            "has a 'budget_warning', the best match did not fit: call "
+            "again with its suggested_token_budget."
         ),
         "inputSchema": {
             "type": "object",

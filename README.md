@@ -98,7 +98,7 @@ Store a memory entry for later retrieval. REQUIRES A KEY. This does not call any
 
 ### `assemble_context` · *requires a key*
 
-Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY. Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why.
+Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY. Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why. If the response has a `budget_warning`, the best match did not fit: call again with its `suggested_token_budget`.
 
 ### `assemble_escalation_context` · *requires a key*
 
@@ -189,6 +189,31 @@ were rejected by the judge model. In four, the benchmark's gold answer
 contradicts the conversation history; we keep the answer the history
 supports and list the case, rather than teach the model to agree with a
 wrong key.
+
+### Energy and time
+
+A model spends energy and time on every token it reads. Measured
+2026-11-17 with the GPU's own energy counter (NVIDIA GeForce RTX 4070,
+`llama3.2:1b`, idle power subtracted), 50 LongMemEval-S
+questions, against the whole history (median 104 652 tokens):
+**95 % less energy and 94.4 % less time** for the model to
+read the context, with the selection at budget 32 000 and every
+session holding the answer included in 90 % of questions.
+
+| The model reads | Tokens (median) | Less energy | Less time | All evidence included |
+|---|---:|---:|---:|---:|
+| Selection, budget 32 000 | 18 248 | 95 % | 94.4 % | 90 % |
+| Selection, budget 16 000 | 12 672 | 97.2 % | 96.5 % | 80 % |
+| Selection, budget 8 000 | 6 158 | 98.7 % | 97.9 % | 50 % |
+| Selection, budget 4 000 | 3 094 | 99.3 % | 98.5 % | 22 % |
+| Selection, budget 2 000 | 1 080 | 99.7 % | 98.8 % | 14 %, 9 empty |
+| Escalation context | 75 066 | 39.3 % | 37.4 % | 98 % |
+
+Per reading of the context, on one GPU with a small model; larger models
+have not been measured. A shorter history leaves less to remove. The
+escalation helper reads its context at least twice per question. If the
+budget is too small for the best match, the response says so in
+`budget_warning` and suggests a budget that fits it.
 
 ## What the numbers mean
 
