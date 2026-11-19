@@ -1,0 +1,14 @@
+{
+  "name": "cap-shield",
+  "owner": {
+    "name": "Robin Lidberg",
+    "url": "https://github.com/robinlidberg-dot"
+  },
+  "plugins": [
+    {
+      "name": "cap-shield",
+      "source": "./",
+      "description": "Memory selection, compression and signed agent passes for AI agents. Measured, not claimed."
+    }
+  ]
+}

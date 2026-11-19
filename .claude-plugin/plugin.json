@@ -1,0 +1,28 @@
+{
+  "name": "cap-shield",
+  "version": "0.7.0",
+  "description": "Memory selection, compression and signed agent passes for AI agents. Measured, not claimed.",
+  "author": {
+    "name": "Robin Lidberg",
+    "url": "https://github.com/robinlidberg-dot"
+  },
+  "homepage": "https://cap-shield-robin.fly.dev",
+  "repository": "https://github.com/robinlidberg-dot/cap-shield-mcp",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "context",
+    "retrieval",
+    "tokens",
+    "compression",
+    "agents",
+    "mcp"
+  ],
+  "privacyPolicyUrl": "https://cap-shield-robin.fly.dev/privacy",
+  "mcpServers": {
+    "cap-shield": {
+      "type": "http",
+      "url": "https://cap-shield-robin.fly.dev/mcp"
+    }
+  }
+}

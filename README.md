@@ -43,6 +43,22 @@ Python 3.9+. Nothing else.
 The optional [SKILL.md](SKILL.md) tells an agent *when* to use these
 tools — and when not to.
 
+## Install as a Claude plugin (server and skill together)
+
+This repository is also a Claude plugin: the remote MCP server plus the
+skill that tells Claude when to use each tool, and when not to.
+
+In Claude Code:
+
+```
+/plugin install cap-shield --marketplace robinlidberg-dot/cap-shield-mcp
+```
+
+The plugin connects to `https://cap-shield-robin.fly.dev/mcp`.
+`measure_traffic`, `list_packages` and `get_account` work without a key;
+the other tools need one (see below). Privacy policy:
+https://cap-shield-robin.fly.dev/privacy
+
 ## Use it from Claude (Claude.ai, Claude Desktop, or Cowork) — no download
 
 The server is also reachable directly over HTTP, so a hosted Claude

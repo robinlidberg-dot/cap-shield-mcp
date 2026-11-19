@@ -1,0 +1,369 @@
+---
+name: cap-shield
+description: Measure and reduce what an agent sends into its context. Use when an agent's context is large, when retrieval quality matters, when the user asks about token cost or context bloat, or when agent answers are wrong in ways that look like missing information rather than reasoning failure. Also use to measure compression on structured machine-to-machine traffic before sending it over the wire.
+---
+
+# CAP-Shield
+
+Selects what goes into an agent's context, and compresses what goes over
+the wire. The difference from other context tools is that the recall is
+measured, not asserted.
+
+## When this matters
+
+Reach for this when any of these are true:
+
+- An agent gets worse as the conversation grows, and the failures look
+  like missing information rather than bad reasoning
+- Context is assembled by "include everything relevant, just in case"
+- Someone asks what a large context is costing
+- Structured machine-to-machine traffic is being sent uncompressed
+
+**The counter-intuitive part:** more context makes agents worse. ETH
+Zurich found context files LOWER task success versus giving the agent no
+repository context at all, while raising inference cost by over 20 %.
+Around two thirds of production agent failures trace to context problems,
+not to the model being incapable.
+
+So cutting context is not only a cost optimisation. It is a correctness
+fix, and that is the reason to do it.
+
+## Do not use this for
+
+- Short conversations that fit comfortably in the budget. Below roughly
+  2 000 tokens there is nothing to leave out, and the saving would be
+  zero for reasons that have nothing to do with how well selection works.
+- Free prose where every sentence is load-bearing.
+- Compressing single short messages. Below roughly 100 bytes, the packet
+  header and authenticated encryption cost more than compression saves.
+  Batch instead.
+- Repeated tool-schema or system-prompt overhead across calls in the same
+  session. That is a caching problem, not a selection problem — the
+  provider's own prompt caching is what solves it. CAP-Shield does not
+  touch it.
+
+Say so plainly when one of these applies rather than reporting a small
+number as if it were a result.
+
+## Measure first, always
+
+Never state what CAP-Shield will save. Measure it on the actual traffic
+and report what comes back — including the parts that look bad.
+
+```bash
+pip install cap-shield
+```
+
+```python
+from cap_shield import measure, print_measurement
+
+print_measurement(measure(
+    texts=[...the actual messages...],
+    query="what the agent would search for",
+))
+```
+
+No account, no key, nothing stored. The text is compressed in memory, the
+numbers are computed, and everything is discarded.
+
+Quotas: 200 messages, 512 kB, 20 measurements per hour per IP.
+
+### Reading the result
+
+The response has four parts, and **three of them can be bad news**:
+
+- `individual.saving_pct` — one message at a time. Can be NEGATIVE.
+- `individual.degraded` — how many messages came out LARGER. Report this
+  number every time, including when it is zero. If it is high AND
+  batching is possible, batch — do not report the weak number and stop
+  there; the batched figure is what the agent should act on.
+- `batched.saving_pct` — the same messages packed together.
+- `token_saving` — a different mechanism entirely. `measured: false`
+  means there was not enough content, not that it failed.
+
+**A real result:** 30 short JSON messages gave −10.5 % individually with
+all 30 degraded, and 87.9 % batched. Reporting only the second number
+would be dishonest; reporting only the first would be useless. Report
+both, weak number first.
+
+### Cumulative
+
+```bash
+python -m cap_gain
+```
+
+Shows what has been saved across all measurements, with the degraded
+count. Collection is silent and local; nothing is sent anywhere.
+`CAP_SHIELD_INGEN_RAKNARE=1` turns it off.
+
+## The MCP server
+
+```bash
+pip install cap-shield
+```
+
+```json
+{
+  "mcpServers": {
+    "cap-shield": {
+      "command": "cap-shield-mcp",
+      "env": {
+        "CAP_SHIELD_API_KEY": "cap_live_..."
+      }
+    }
+  }
+}
+```
+
+The `env` block is only needed for the tools that require a key
+(`remember`, `assemble_context`, `assemble_escalation_context`,
+`issue_pass`, `pack_batch`, `unpack_batch`).
+
+Or take the server as a single file, if a package is unwelcome:
+
+```bash
+curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
+```
+
+The server itself imports nothing outside the standard library.
+
+Nine tools:
+
+| Tool | Purpose | Account |
+|---|---|---|
+| `measure_traffic` | Measure saving on your own traffic | No |
+| `list_packages` | Domain packages with measured figures | No |
+| `remember` | Store a memory entry | Yes |
+| `assemble_context` | Retrieve the relevant entries, not the whole history | Yes |
+| `assemble_escalation_context` | A wide, date-headed context for questions the normal selection could not answer | Yes |
+| `get_account` | Obtain a key | No |
+| `issue_pass` | Issue a short-lived signed credential a third party can verify independently | Yes |
+| `pack_batch` | Pack several messages into one compressed packet | Yes |
+| `unpack_batch` | Unpack a batch packet back into the original messages | Yes |
+
+`assemble_context` calls no model. It selects and returns; the caller
+decides what to do with the result. It is not one-shot — if a specific
+detail turns out to be missing mid-session, call it again with a
+narrower query rather than assuming the first call was exhaustive.
+
+### When the selected context is not enough
+
+`assemble_context` is built to send as little as possible. Some
+questions need more: dates ("last Saturday", "how many days ago"),
+counts across sessions, or a detail that ranked low. Then call
+`assemble_escalation_context` with the same namespace and the question.
+It returns a much wider `context` (by default up to 150 000 tokens: lower
+`token_budget` if your window is smaller), where every stored entry
+starts with `--- Session YYYY/MM/DD (Ddd) HH:MM ---`, and
+`utelamnat_kontext`: lower-ranked entries that were left out. Answer from
+`context`; read `utelamnat_kontext` only if the answer is still missing.
+Use the session headers for anything about time.
+
+Python callers can let the open-source helper in the same package do the
+answering with their own model key: pass the response to
+`cap_escalate_helper.eskalera_om_behovs_v6(response, question,
+modell="openai", modell_namn=..., dagens_datum="YYYY/MM/DD")`. How often that answer
+is right was measured, with the method and every manually reviewed
+answer listed, under `memory_layer.answer_benchmark` in
+`/.well-known/cap-shield.json`. Quote it from there, not from memory;
+the figures depend on the answer model.
+
+What a smaller context saves in energy and time for the model reading it
+is measured with a GPU's own energy counter and published next to it,
+under `memory_layer.energy_benchmark`, with the hardware, the model,
+each budget's trade-off against how often all the evidence was included,
+and the caveats. Quote it from there too, with its caveats: it was
+measured on one GPU with one small model, not in a data centre.
+
+`issue_pass` is the same `POST /api/v1/pass` endpoint described under
+"Proving identity to someone besides us" below — reachable here as a
+proper MCP tool, not only over REST.
+
+## Choosing a package
+
+A package is a dictionary trained on a corpus, not a name. Seven exist.
+Do not guess which fits — `list_packages` returns the measured figures,
+and `measure_traffic` settles it against the actual traffic.
+
+Two things that decide the outcome more than package choice:
+
+**Message size.** The packet header is 5 bytes and authenticated
+encryption adds 25. On a 62-byte message that is half the packet.
+Batched, it is spread across the whole batch.
+
+**Whether batching is possible.** Some packages only work batched, and
+that is stated in the catalogue rather than hidden. If the agent cannot
+batch, use the individual figure and say so.
+
+## Batching has a security condition
+
+Batching compresses several messages in the same context, which opens a
+CRIME/BREACH-style side channel: someone who can place chosen text in the
+same batch as a secret, and observe the batch size, learns something
+about the secret.
+
+**Only batch messages that already share a trust boundary.** One tenant's
+own traffic is safe. Traffic where a second party controls part of the
+content is not.
+
+Optional padding (`padding=PADDING_STANDARD`) rounds to a 64-byte step
+and closes it, for under two bytes a message. **It is off by default** —
+say so rather than let anyone assume it is on. If you batch across a
+trust boundary, turning padding on is not optional — it is the
+difference between the name Shield meaning something here and not.
+
+Individual packing does not have this problem at all.
+
+## Reporting results
+
+Follow the same rules the service follows about itself:
+
+- **Never state a figure without saying what it was measured on.** The
+  published numbers come from open corpora and do not predict anyone
+  else's outcome.
+- **Always report the degraded count**, including zero. A field that
+  appears only with bad news teaches the reader that its absence means
+  something.
+- **Keep bytes and tokens apart.** Compression saves bytes over the wire.
+  Selection saves tokens in the context. They are different mechanisms
+  and adding them together produces a number that means nothing.
+- **Compressed packets are decompressed before a model sees them.**
+  Compression does not reduce inference cost. Saying otherwise is the
+  single easiest way to be wrong about this product.
+- **Say when something has not been measured.** `measured: false` is an
+  answer, not a failure.
+
+## Memory is versioned, and updates are stored as deltas
+
+An entry can be updated without storing it again in full. Every fifth
+version is complete; the ones between are stored as a delta against the
+previous version. A SHA-256 of the original is kept per version and
+checked on read, so the chain is lossless, and no version depends on
+more than four others.
+
+This matters because agent memory is mostly small edits to text that
+already exists. Storing each edit in full is what makes memory expensive
+to keep.
+
+Each entry also picks its own compression strategy by size — and if
+compression does not pay off, the entry is stored RAW and the response
+says so. Same rule as the degraded share on the wire: report it rather
+than hide it.
+
+`remember` takes an optional `ttl_days`. After that many days,
+`assemble_context` stops selecting the entry — it is not deleted, only
+no longer chosen, the same distinction the archive guarantee draws
+between "never deleted" and "actively selected". Omit it and an entry
+is eligible forever, as before this field existed. Use it for anything
+whose truth decays with time (a status update, a temporary instruction,
+an in-progress fact that will be superseded) rather than letting it
+compete with current information indefinitely.
+
+## Multi-agent setups: one namespace per role
+
+`remember` and `assemble_context` already take a `namespace` argument.
+For a manager agent coordinating sub-agents, giving each role its own
+namespace (`coder`, `finance`, `support`, ...) is the isolation a
+multi-agent handoff needs, with no new tool: the manager writes into the
+namespace that belongs to the recipient, and each sub-agent only ever
+calls `assemble_context` against its own. This is the same isolation
+mechanism already used between tenants, one level down.
+
+## What the response tells you — use it
+
+A saving you cannot audit is a saving the customer has to take on trust.
+The response says more than the total, and the extra fields are what make
+the number checkable:
+
+- `method` on every hit — vector or lexical, so you can see WHICH
+  mechanism found that entry
+- `baseline_tokens` — what the whole history would have cost, in the same
+  format. Without it the saving cannot be computed, only claimed
+- `candidates_before_autocut` and `autocut_removed` — what relevance
+  scoring dropped
+- `deduplicated` — near-identical entries collapsed rather than sent twice
+- `skipped_too_big` and `item_ids`
+- `budget_warning` — set when the best match did not fit the budget (or
+  nothing fit and the context is empty). It carries
+  `suggested_token_budget`: call again with that instead of sending an
+  empty or second-best context
+
+**When reporting a saving, quote `baseline_tokens` alongside it.** A
+percentage without its baseline is not a measurement.
+
+## Dictionaries improve on the customer's own traffic
+
+The shared dictionaries are trained on open corpora. A customer's own
+dictionary is trained on their traffic, in their own isolated store, and
+is never shared or merged into the curated ones.
+
+**The part worth knowing:** a new version is adopted only if it measures
+better on held-out data that neither version was trained on. A
+retraining that does not win is rejected, the old dictionary stays, and
+the rejection is logged with both figures.
+
+That gate matters because a dictionary trained on too little or too
+skewed traffic measures WORSE than none — the payload falls back to raw
+and the header is still added.
+
+Old versions are never deleted, so packets compressed under any earlier
+version still unpack.
+
+Retraining is manual by default (`POST /api/v1/catalog/mature`).
+Automatic retraining exists but is off unless the customer has enabled
+both `training` and `auto_mature`, and it consumes quota.
+
+**Do not promise a figure for this.** What maturity gains depends on the
+customer's traffic. The response reports `old_saving_pct`,
+`new_saving_pct` and `improvement_pp` — quote those, not an estimate.
+
+## Portability
+
+Dictionary versions are never deleted, and the guarantee does not rest
+on CAP-Shield still existing: the archive export carries the dictionary
+binaries, and `cap_unpack.py` runs standalone — no gateway, no network,
+no account. It is served without a token, because whoever needs it most
+is whoever no longer has one.
+
+What does NOT come with it: the memory store, vector selection, autocut,
+package maturity, or the measurement apparatus. Those are the service,
+not a file you export once and stop paying for.
+
+## Proving identity to someone besides us
+
+`issue_pass` (or `POST /api/v1/pass` over REST) issues a short-lived
+(15 minute) signed credential that a THIRD PARTY can verify
+independently against `/.well-known/jwks.json` — no CAP-Shield account
+needed on their end. Same Bearer token as every other endpoint here, no
+new onboarding.
+
+```json
+{"acts_for": "who the agent is acting for", "audience": "optional", "scope": {"can_read": "invoice_json", "max_budget_usd": 500}}
+```
+
+It does **not** validate `acts_for` or `scope` against reality. It
+attests only that the holder of the key claimed it, at that moment, with
+a record in the hash-chained audit log. Report that plainly if
+describing it — claiming more would be exactly the kind of unmeasured
+assertion this document argues against everywhere else. `scope` is
+optional and freeform; omit it and the pass looks exactly as it did
+before the field existed.
+
+**Request the pass right before the hand-off, not at the start of a
+workflow that includes a wait.** A pass issued before a human-approval
+gate can expire before it is ever shown to the recipient — there is no
+refresh, only requesting a new one, which works at any time with the
+same key. Fifteen minutes is short by design; treat it as "ask right
+when you need it," not "ask ahead, just in case."
+
+No blockchain, no NFT, no wallet, no revocation list — a pass without
+one must be short-lived, since a revocation list is one more service
+that would need to stay up for the pass to be checkable at all.
+
+## Everything else
+
+`https://cap-shield-robin.fly.dev/.well-known/cap-shield.json` carries
+the live figures, the known limitations, what has NOT been measured, and
+the roadmap of what is planned but not built. Fetch it rather than
+relying on anything written here — this file goes stale, that document
+does not.
