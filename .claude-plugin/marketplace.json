@@ -1,5 +1,6 @@
 {
   "name": "cap-shield",
+  "description": "CAP-Shield for Claude: memory selection, compression and signed agent passes, as a remote MCP server plus a skill.",
   "owner": {
     "name": "Robin Lidberg",
     "url": "https://github.com/robinlidberg-dot"

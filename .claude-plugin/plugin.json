@@ -2,6 +2,7 @@
   "name": "cap-shield",
   "version": "0.7.0",
   "description": "Memory selection, compression and signed agent passes for AI agents. Measured, not claimed.",
+  "icon": ".claude-plugin/icon.png",
   "author": {
     "name": "Robin Lidberg",
     "url": "https://github.com/robinlidberg-dot"
