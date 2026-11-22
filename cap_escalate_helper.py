@@ -770,6 +770,70 @@ def eskalera_om_behovs_v2(cap_svar: dict, fraga: str, modell: str = "claude",
 # ---------------------------------------------------------------------------
 
 
+# ----------------------------------------------------------------------
+# Steg 123: RÄTT PERSON.
+#
+# I samtal mellan två personer svarade modellen ofta med den ANDRA
+# personens upplevelse: frågan gällde Calvins workshop, men det var Dave
+# som blivit uttagen. Raderna i kontexten börjar med talarens namn, så
+# informationen fanns -- modellen kontrollerade den bara inte.
+#
+# Regeln läggs till BARA när kandidaterna har talarrader och frågan nämner
+# en av talarna. Annars returneras tom sträng och prompten blir exakt som
+# förut. LongMemEval har inga talarrader i sina kontexter.
+# ----------------------------------------------------------------------
+_TALARRAD = re.compile(r"^([A-Z][a-zA-Z]{1,20}):\s", re.MULTILINE)
+_INTE_TALARE = frozenset({
+    "User", "Assistant", "Note", "Question", "Answer", "Ingredients",
+    "Instructions", "Step", "Example", "Tip", "Summary", "Title", "Q", "A",
+    "SVAR", "Session", "USER", "ASSISTANT"})
+_MIN_TALARRADER = 3
+
+
+def _talare_i_fragan(kandidater: str, fraga: str) -> tuple[list[str], list[str]]:
+    """(alla talare i kandidaterna, de av dem som frågan nämner)."""
+    antal: dict[str, int] = {}
+    for namn in _TALARRAD.findall(kandidater or ""):
+        antal[namn] = antal.get(namn, 0) + 1
+    talare = sorted(n for n, k in antal.items()
+                    if k >= _MIN_TALARRADER and n not in _INTE_TALARE)
+    i_fragan = [n for n in talare
+                if re.search(r"\b" + re.escape(n) + r"\b", fraga or "")]
+    return talare, i_fragan
+
+
+def _ratt_person_regel(kandidater: str, fraga: str) -> str:
+    talare, i_fragan = _talare_i_fragan(kandidater, fraga)
+    if not i_fragan:
+        return ""
+    vem = " och ".join(i_fragan)
+    return (
+        "\nRÄTT PERSON-REGEL: kandidaterna är ett samtal mellan flera "
+        f"personer ({', '.join(talare)}), och varje rad börjar med vem som "
+        f"talar. Frågan gäller {vem}. Kontrollera vem uppgiften faktiskt "
+        f"gäller innan du svarar: det {vem} själv säger om sig själv, eller "
+        f"det någon annan uttryckligen säger om {vem}. Något som en ANNAN "
+        f"person berättar om sig själv gäller INTE {vem}, även om ämnet, "
+        "platsen eller tidpunkten stämmer exakt med frågan. Finns uppgiften "
+        f"bara om en annan person än {vem}: låt 'SVAR:'-raden vara exakt "
+        "'Not available in the provided selection.' Anta aldrig att båda "
+        "gjort samma sak.\n")
+
+
+def _ratt_person_kontroll(kandidater: str, fraga: str) -> str:
+    _, i_fragan = _talare_i_fragan(kandidater, fraga)
+    if not i_fragan:
+        return ""
+    vem = " och ".join(i_fragan)
+    return (
+        f"- RÄTT PERSON: frågan gäller {vem}. Peka ut raden i kandidaterna "
+        "som stöder ditt svar och vem som säger den. Säger en ANNAN person "
+        f"den om sig själv, gäller uppgiften inte {vem}: byt till 'Not "
+        "available in the provided selection.' Omvänt: om raden visar att "
+        f"uppgiften gäller {vem} (hen säger det själv, eller någon säger det "
+        "om hen), behåll svaret.\n")
+
+
 def _prompt_v3(cap_svar: dict, fraga: str, dagens_datum: str | None = None) -> str:
     kandidater = cap_svar.get("context", "")
     datumrad = (f"\nFRÅGANS TIDPUNKT (använd denna som \"idag\" vid "
@@ -805,7 +869,8 @@ def _prompt_v3(cap_svar: dict, fraga: str, dagens_datum: str | None = None) -> s
         + "\n" + _BESKRIVANDE_SVAR_REGEL + "\n" + _INTE_KOMBINERA_REGEL
         + "\n" + _NOLL_TRAFFAR_REGEL + "\n" + _KATEGORI_BREDD_REGEL
         + "\n" + _NAMNGIVEN_SLUTPUNKT_UTESLUTS_REGEL
-        + "\n" + _UNGEFARLIG_PERIOD_TROSKEL_REGEL +
+        + "\n" + _UNGEFARLIG_PERIOD_TROSKEL_REGEL
+        + _ratt_person_regel(kandidater, fraga) +
         "\nVIKTIGT OM SVARSFORMAT (så svaret går att jämföra mot ett facit):\n"
         "- Resonemang/uträkning får stå EN eller flera rader, men avsluta "
         "ALLTID med en sista rad som börjar exakt med 'SVAR: ' följt av "
@@ -908,7 +973,8 @@ def _prompt_verifiering_v3(fraga: str, kandidater: str, forsta_svar_ra: str) -> 
         "ifrån din uträknade: kontrollera om det ändå är den enda "
         "rimliga matchningen — om så, byt till den i stället för 'Not "
         "available' (se flerstegs-ungefärliga-referenser-tillägget i "
-        "närmaste-datum-regeln i din ursprungliga instruktion).\n\n"
+        "närmaste-datum-regeln i din ursprungliga instruktion).\n"
+        + _ratt_person_kontroll(kandidater, fraga) + "\n"
         f"FRÅGA: {fraga}\n\nKANDIDATER:\n{kandidater}\n\n"
         f"DITT FÖRSTA SVAR:\n{forsta_svar_ra}\n\n"
         "Skriv din dubbelkontroll kort (ett par rader räcker), och avsluta "

@@ -439,6 +439,31 @@ def prompt_tidsankare_bred(fraga: str, fragans_datum: str, ankare: dict,
     return "SECOND READING. " + bred
 
 
+def _regel_ratt_person(fraga: str, text: str) -> str:
+    """Steg 123b: samma regel som i eskaleringshjälpens v3-prompt, på
+    engelska som resten av den här prompten. Tom sträng när texten saknar
+    talarrader eller frågan inte nämner någon av talarna -- då blir
+    prompten exakt som förut. Funktionen bor i cap_escalate_helper; den
+    importeras först här, så att modulerna inte importerar varandra vid
+    start."""
+    try:
+        from cap_escalate_helper import _talare_i_fragan
+    except ImportError:
+        return ""
+    talare, i_fragan = _talare_i_fragan(text, fraga)
+    if not i_fragan:
+        return ""
+    vem = " and ".join(i_fragan)
+    return (
+        "RULE P - the right person. These sessions are a conversation "
+        f"between several people ({', '.join(talare)}), and every line "
+        f"starts with who is speaking. The question is about {vem}. "
+        "Something another person says about themselves is NOT about "
+        f"{vem}, even if the topic, place or time matches the question "
+        f"exactly. If the fact exists only for someone other than {vem}, "
+        "the information is not available (treat it as case B2).\n\n")
+
+
 def prompt_avstaende(fraga: str, fragans_datum: str, text: str,
                      antal: int) -> str:
     """Version 2 (2026-11-12). Version 1 bad modellen jämföra "namn och
@@ -501,6 +526,7 @@ def prompt_avstaende(fraga: str, fragans_datum: str, text: str,
         "session counts as the date it happened. Time expressions in "
         "the question (\"last Friday\", \"two weeks ago\") are counted "
         "from the question date.\n\n"
+        + _regel_ratt_person(fraga, text) +
         "Write a short reasoning (2-5 lines) that names the case (B1, "
         "B2 or B3), and finish with exactly one last line, either\n"
         "SVAR: <the short, concrete answer in English> [<what it "
