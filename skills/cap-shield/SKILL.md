@@ -116,7 +116,8 @@ pip install cap-shield
 ```
 
 The `env` block is only needed for the tools that require a key
-(`remember`, `assemble_context`, `assemble_escalation_context`,
+(`remember`, `remember_batch`, `list_memories`, `update_memory`,
+`forget`, `assemble_context`, `assemble_escalation_context`,
 `issue_pass`, `pack_batch`, `unpack_batch`).
 
 Or take the server as a single file, if a package is unwelcome:
@@ -127,19 +128,52 @@ curl -O https://cap-shield-robin.fly.dev/cap_mcp.py
 
 The server itself imports nothing outside the standard library.
 
-Nine tools:
+Fifteen tools:
 
 | Tool | Purpose | Account |
 |---|---|---|
 | `measure_traffic` | Measure saving on your own traffic | No |
 | `list_packages` | Domain packages with measured figures | No |
 | `remember` | Store a memory entry | Yes |
+| `remember_batch` | Store up to 100 entries in one call | Yes |
+| `list_memories` | List stored entries newest first, with previews and ids | Yes |
+| `update_memory` | Replace the text of an existing entry; the old text stays in its history | Yes |
+| `forget` | Permanently delete entries and their history | Yes |
 | `assemble_context` | Retrieve the relevant entries, not the whole history | Yes |
 | `assemble_escalation_context` | A wide, date-headed context for questions the normal selection could not answer | Yes |
 | `get_account` | Obtain a key | No |
+| `start_sandbox` | A temporary key to try memory without an account (24 hours) | No |
+| `verify_pass` | Check a pass you were given: signature, issuer, expiry, audience, scope | No |
 | `issue_pass` | Issue a short-lived signed credential a third party can verify independently | Yes |
 | `pack_batch` | Pack several messages into one compressed packet | Yes |
 | `unpack_batch` | Unpack a batch packet back into the original messages | Yes |
+
+A key can be created read-only (`POST /api/v1/keys` with
+`"scope": "read"`). It can retrieve, list and unpack, nothing else;
+writes answer 403 `READ_ONLY_KEY`. Give that one to tools that should
+search memory but never change it.
+
+Every authenticated REST response carries the quota state:
+`RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (calls,
+on plans with a call limit) and `X-CAP-Quota-Limit`,
+`X-CAP-Quota-Remaining` and `X-CAP-Quota-Reset` (monthly packets).
+Slow down when `RateLimit-Remaining` nears 0 instead of waiting for a
+429; store many entries with `remember_batch`, which counts as one call.
+
+To try memory before anyone creates an account, call `start_sandbox`
+and pass the returned `sandbox_key` to the memory tools. It lasts 24
+hours, holds 200 entries, and is then deleted. Do not put real personal
+data in it.
+
+`assemble_context` returns `possible_conflicts`: pairs of short
+entries with the same wording but different values, newest first, with
+their dates and whether each is in `context`. It is a word comparison,
+not a verdict. If one entry is an update of the other, rely on the
+newer one and tidy up with `update_memory` or `forget`.
+
+When a fact changes, prefer `update_memory` on the old entry over a
+new `remember`: two entries that disagree both stay selectable. Find
+the id with `list_memories`. `forget` cannot be undone.
 
 `assemble_context` calls no model. It selects and returns; the caller
 decides what to do with the result. It is not one-shot — if a specific

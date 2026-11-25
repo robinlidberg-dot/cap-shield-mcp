@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.robinlidberg-dot/cap-shield",
   "description": "Context selection and compression for AI agents - recall measured, not claimed.",
-  "version": "0.7.1",
+  "version": "0.7.6",
   "repository": {
     "url": "https://github.com/robinlidberg-dot/cap-shield-mcp",
     "source": "github"
@@ -12,14 +12,14 @@
     {
       "registryType": "pypi",
       "identifier": "cap-shield",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "CAP_SHIELD_API_KEY",
-          "description": "Only needed for the tools that store, retrieve or pack data. measure_traffic and list_packages work without it.",
+          "description": "Only needed for the tools that store or retrieve memory, pack data or issue passes. measure_traffic, list_packages, start_sandbox, verify_pass and get_account work without it; start_sandbox gives a 24-hour key for trying memory.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
@@ -34,7 +34,7 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <CAP-Shield API key>. Only needed for the tools that store, retrieve or pack data; measure_traffic, list_packages and get_account work without it.",
+          "description": "Bearer <CAP-Shield API key>. Only needed for the tools that store or retrieve memory, pack data or issue passes; measure_traffic, list_packages, start_sandbox, verify_pass and get_account work without it.",
           "isRequired": false,
           "isSecret": true
         }

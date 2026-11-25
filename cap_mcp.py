@@ -40,6 +40,7 @@ kunna MÄTA innan någon registrerar sig.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import sys
@@ -47,7 +48,7 @@ from typing import Any
 
 BAS = os.environ.get("CAP_SHIELD_URL", "https://cap-shield-robin.fly.dev")
 PROTOKOLL = "2024-11-05"
-VERSION = "0.7.0"  # 2026-11-15: + assemble_escalation_context (steg 101)
+VERSION = "0.7.6"  # 2026-11-25: + verify_pass (steg 134)
 
 
 # ----------------------------------------------------------------------
@@ -132,6 +133,100 @@ VERKTYG = [
                 },
             },
             "required": ["namespace", "text"],
+        },
+    },
+    {
+        "name": "remember_batch",
+        "description": (
+            "Store up to 100 memory entries in ONE call. REQUIRES A KEY. "
+            "Counts as one call against the rate limit and one packet per "
+            "entry against the monthly quota, so prefer it over many "
+            "remember calls. All or nothing: duplicate ids or a blocked "
+            "entry reject the whole batch before anything is stored. "
+            "Does not call any language model."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string",
+                              "description": "Groups related memories."},
+                "items": {
+                    "type": "array", "minItems": 1, "maxItems": 100,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "item_id": {
+                                "type": "string",
+                                "description": (
+                                    "Optional. a-z, 0-9, - and _, at most "
+                                    "64 characters. Same id overwrites. "
+                                    "Omit for a generated one.")},
+                            "ttl_days": {"type": "integer"},
+                        },
+                        "required": ["text"],
+                    },
+                },
+            },
+            "required": ["namespace", "items"],
+        },
+    },
+    {
+        "name": "list_memories",
+        "description": (
+            "List what is stored, newest first, with a short preview of "
+            "each entry and its item_id. REQUIRES A KEY. Omit namespace to "
+            "list your namespaces instead. Use the item_id with "
+            "update_memory or forget. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string",
+                              "description": "Omit to list namespaces."},
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100,
+                          "description": "Default 50."},
+                "tag": {"type": "string",
+                        "description": "Only entries with this tag."},
+            },
+        },
+    },
+    {
+        "name": "update_memory",
+        "description": (
+            "Replace the text of an EXISTING memory entry. REQUIRES A KEY. "
+            "Fails with MEMORY_NOT_FOUND if the item_id does not exist "
+            "(use remember to create). The previous text is kept in the "
+            "entry's version history; created date and tags are kept."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string"},
+                "item_id": {"type": "string"},
+                "text": {"type": "string"},
+                "ttl_days": {"type": "integer",
+                             "description": "Optional. Omit to keep the current expiry."},
+            },
+            "required": ["namespace", "item_id", "text"],
+        },
+    },
+    {
+        "name": "forget",
+        "description": (
+            "Permanently delete up to 100 memory entries, including their "
+            "version history. REQUIRES A KEY. Cannot be undone. Unknown "
+            "ids are reported in not_found, not treated as an error."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": {"type": "string"},
+                "item_ids": {"type": "array", "items": {"type": "string"},
+                             "minItems": 1, "maxItems": 100},
+            },
+            "required": ["namespace", "item_ids"],
         },
     },
     {
@@ -222,6 +317,18 @@ VERKTYG = [
         },
     },
     {
+        "name": "start_sandbox",
+        "description": (
+            "Try memory WITHOUT an account. Returns a temporary "
+            "sandbox_key; pass it as the sandbox_key argument to remember, "
+            "remember_batch, assemble_context, list_memories, "
+            "update_memory or forget. Everything is deleted after 24 hours. "
+            "Limits: 200 entries, 1 MB of text. No email needed. Do not "
+            "store real personal data in a sandbox."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_account",
         "description": (
             "Get an account and an API key. Requires an email address. "
@@ -272,6 +379,31 @@ VERKTYG = [
                 },
             },
             "required": ["acts_for"],
+        },
+    },
+    {
+        "name": "verify_pass",
+        "description": (
+            "Check a CAP-Shield pass you were given: signature against "
+            "CAP-Shield's published keys, issuer, expiry, and, if you give "
+            "them, audience and required scope. No key needed. Returns "
+            "valid true/false with the reason and the claims. It cannot "
+            "tell you whether acts_for is TRUE, only that a key holder "
+            "claimed it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pass": {"type": "string",
+                         "description": "The JWT from issue_pass."},
+                "audience": {"type": "string",
+                             "description": ("Your own identifier. Omit "
+                                             "only if any audience is fine.")},
+                "required_scope": {"type": "object",
+                                   "description": ("Key/value pairs that "
+                                                   "must be in cap_scope.")},
+            },
+            "required": ["pass"],
         },
     },
     {
@@ -346,28 +478,179 @@ VERKTYG = [
 # en klient använder dem för att avgöra vad som får köras utan att fråga.
 # readOnlyHint: ändrar ingenting som användaren äger.
 # destructiveHint: kan skriva över eller ta bort (gäller bara om inte
-#   readOnly). Inget av verktygen raderar eller skriver över.
+#   readOnly). Steg 128: update_memory och forget är de enda som sätter
+#   den. remember med ett id som redan finns skriver också över, men
+#   utan id skapas alltid en ny post -- additivt som standard.
 # openWorldHint: når andra än CAP-Shields egen tjänst. Inget gör det.
 # Kvot och telemetri räknas upp av alla anrop; det räknas inte som att
 # ändra användarens data.
+# Steg 129: sandbox_key på alla minnesverktyg. Valfri; utan den gäller
+# nyckeln ur miljön (stdio) eller Authorization-huvudet (/mcp).
+SANDLADA_VERKTYG = ("remember", "remember_batch", "assemble_context",
+                    "assemble_escalation_context", "list_memories",
+                    "update_memory", "forget")
+for _v in VERKTYG:
+    if _v["name"] in SANDLADA_VERKTYG:
+        _v["inputSchema"].setdefault("properties", {})["sandbox_key"] = {
+            "type": "string",
+            "description": ("Optional. A temporary key from start_sandbox, "
+                            "for trying without an account.")}
+        _v["description"] = _v["description"].replace(
+            "REQUIRES A KEY.",
+            "REQUIRES A KEY (or a sandbox_key from start_sandbox).", 1)
+
+# ----------------------------------------------------------------------
+# Steg 132: outputSchema för verktygen vars svar agenten läser fält ur.
+# Tillåtande med avsikt: bara det som alltid finns är required, och
+# additionalProperties lämnas öppet. Se hantera() för structuredContent.
+# ----------------------------------------------------------------------
+_STR_ELLER_NULL = {"type": ["string", "null"]}
+UTSCHEMAN = {
+    "remember": {
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "item_id": {"type": "string"},
+            "tokens_est": {"type": "integer"},
+            "raw_bytes": {"type": "integer"},
+            "wire_bytes": {"type": "integer"},
+            "expires_utc": _STR_ELLER_NULL,
+        },
+        "required": ["namespace", "item_id"],
+    },
+    "remember_batch": {
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "stored": {"type": "integer"},
+            "items": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"item_id": {"type": "string"}},
+                "required": ["item_id"]}},
+        },
+        "required": ["namespace", "stored", "items"],
+    },
+    "list_memories": {
+        "type": "object",
+        "description": ("With a namespace: a page of entries. Without: "
+                        "'namespaces' only."),
+        "properties": {
+            "namespaces": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"namespace": {"type": "string"},
+                               "items": {"type": "integer"}}}},
+            "namespace": {"type": "string"},
+            "total": {"type": "integer"},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+            "next_offset": {"type": ["integer", "null"]},
+            "items": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "item_id": {"type": "string"},
+                    "created_utc": _STR_ELLER_NULL,
+                    "updated_utc": _STR_ELLER_NULL,
+                    "expires_utc": _STR_ELLER_NULL,
+                    "expired": {"type": "boolean"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "preview": _STR_ELLER_NULL,
+                },
+                "required": ["item_id"]}},
+        },
+    },
+    "update_memory": {
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "item_id": {"type": "string"},
+            "version": {"type": "integer"},
+            "previous_version": {"type": "integer"},
+            "created_utc": _STR_ELLER_NULL,
+            "updated_utc": _STR_ELLER_NULL,
+            "expires_utc": _STR_ELLER_NULL,
+        },
+        "required": ["namespace", "item_id", "version"],
+    },
+    "forget": {
+        "type": "object",
+        "properties": {
+            "namespace": {"type": "string"},
+            "forgotten": {"type": "array", "items": {"type": "string"}},
+            "not_found": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["namespace", "forgotten", "not_found"],
+    },
+    "assemble_context": {
+        "type": "object",
+        "properties": {
+            "context": {"type": "string",
+                        "description": "Send this to the model."},
+            "item_ids": {"type": "array", "items": {"type": "string"}},
+            "tokens_used_est": {"type": "integer"},
+            "escalate_recommended": {"type": "boolean"},
+            "budget_warning": {"type": ["object", "null"]},
+            "possible_conflicts": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "item_ids": {"type": "array", "items": {"type": "string"}},
+                    "newer": _STR_ELLER_NULL,
+                    "dates": {"type": "object"},
+                    "only_in": {"type": "object"},
+                    "in_context": {"type": "object"},
+                }}},
+        },
+        "required": ["context"],
+    },
+    "verify_pass": {
+        "type": "object",
+        "properties": {
+            "valid": {"type": "boolean"},
+            "reason": {"type": "string"},
+            "checks": {"type": "object"},
+            "claims": {"type": "object"},
+            "warning": {"type": "string"},
+            "note": {"type": "string"},
+        },
+        "required": ["valid", "checks"],
+    },
+    "start_sandbox": {
+        "type": "object",
+        "properties": {
+            "sandbox_key": {"type": "string"},
+            "expires_utc": {"type": "string"},
+            "limits": {"type": "object"},
+        },
+        "required": ["sandbox_key", "expires_utc"],
+    },
+}
+for _v in VERKTYG:
+    if _v["name"] in UTSCHEMAN:
+        _v["outputSchema"] = UTSCHEMAN[_v["name"]]
+
 ANNOTERINGAR = {
     "measure_traffic": ("Measure possible savings", True, True),
     "list_packages": ("List compression packages", True, True),
     "remember": ("Store a memory entry", False, False),
+    "remember_batch": ("Store many memory entries", False, False),
+    "list_memories": ("List stored memory", True, True),
+    "update_memory": ("Replace a memory entry", False, True, True),
+    "forget": ("Delete memory entries", False, True, True),
     "assemble_context": ("Retrieve relevant memory", True, True),
     "assemble_escalation_context": ("Retrieve wide dated memory", True, True),
     "get_account": ("Create account and API key", False, False),
+    "start_sandbox": ("Start a 24-hour memory sandbox", False, False),
     "issue_pass": ("Issue a signed agent pass", False, False),
+    "verify_pass": ("Verify a signed agent pass", True, True),
     "pack_batch": ("Compress a batch of messages", True, True),
     "unpack_batch": ("Decompress a batch packet", True, True),
 }
 for _v in VERKTYG:
-    _titel, _las, _idem = ANNOTERINGAR[_v["name"]]
+    _titel, _las, _idem, *_destr = ANNOTERINGAR[_v["name"]]
     _v["title"] = _titel
     _v["annotations"] = {
         "title": _titel,
         "readOnlyHint": _las,
-        "destructiveHint": False,
+        "destructiveHint": bool(_destr and _destr[0]),
         "idempotentHint": _idem,
         "openWorldHint": False,
     }
@@ -437,13 +720,15 @@ def _anrop(vag: str, kropp: dict | None = None, metod: str = "POST",
     miljön, som förut.
     """
     n = (nyckel if nyckel is not None
-         else _NYCKEL_FOR_ANROP or _nyckel())
+         else _SANDLADA.get() or _NYCKEL_FOR_ANROP or _nyckel())
 
     if kraver_nyckel and not n:
         return {"error": (
             "No API key. Set CAP_SHIELD_API_KEY in the server's env, "
-            "or call get_account to obtain one. The measure_traffic "
-            "and list_packages tools work without a key.")}
+            "or call get_account to obtain one. To try memory without "
+            "an account, call start_sandbox and pass the returned "
+            "sandbox_key to this tool. measure_traffic, list_packages, "
+            "start_sandbox and verify_pass work without a key.")}
 
     if _UTFORARE is not None:
         try:
@@ -476,7 +761,23 @@ def _anrop(vag: str, kropp: dict | None = None, metod: str = "POST",
         return {"error": f"Could not reach {BAS}: {exc}"}
 
 
+_SANDLADA = contextvars.ContextVar("cap_sandbox_key", default=None)
+
+
 def kor_verktyg(namn: str, arg: dict) -> dict:
+    # Steg 129: plocka ut sandbox_key och låt den gälla för anropet.
+    # Samma funktion anropas igen utan argumentet, med nyckeln satt.
+    if isinstance(arg, dict) and arg.get("sandbox_key"):
+        arg = dict(arg)
+        t = _SANDLADA.set(str(arg.pop("sandbox_key")).strip())
+        try:
+            return kor_verktyg(namn, arg)
+        finally:
+            _SANDLADA.reset(t)
+
+    if namn == "start_sandbox":
+        return _anrop("/api/v1/sandbox", {}, kraver_nyckel=False)
+
     if namn == "measure_traffic":
         kropp = {"texts": arg.get("texts", []),
                  "dict_id": arg.get("dict_id", "finance")}
@@ -497,6 +798,35 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
         if arg.get("ttl_days"):
             kropp["ttl_days"] = arg["ttl_days"]
         return _anrop("/api/v1/memory/put", kropp)
+
+    if namn == "list_memories":
+        kropp = {k: arg[k] for k in ("namespace", "offset", "limit", "tag")
+                 if arg.get(k) is not None}
+        return _anrop("/api/v1/memory/list", kropp)
+
+    if namn == "update_memory":
+        kropp = {"namespace": arg["namespace"], "item_id": arg["item_id"],
+                 "text": arg["text"]}
+        if arg.get("ttl_days"):
+            kropp["ttl_days"] = arg["ttl_days"]
+        return _anrop("/api/v1/memory/update", kropp)
+
+    if namn == "forget":
+        return _anrop("/api/v1/memory/forget",
+                      {"namespace": arg["namespace"],
+                       "item_ids": list(arg.get("item_ids") or [])})
+
+    if namn == "remember_batch":
+        import uuid
+        poster = []
+        for p in arg.get("items") or []:
+            post = {"item_id": p.get("item_id") or uuid.uuid4().hex[:16],
+                    "text": p.get("text", "")}
+            if p.get("ttl_days"):
+                post["ttl_days"] = p["ttl_days"]
+            poster.append(post)
+        return _anrop("/api/v1/memory/put-batch",
+                      {"namespace": arg["namespace"], "items": poster})
 
     if namn == "assemble_context":
         kropp = {
@@ -526,6 +856,14 @@ def kor_verktyg(namn: str, arg: dict) -> dict:
         if arg.get("traffic"):
             kropp["traffic"] = arg["traffic"]
         return _anrop("/api/v1/beta-signup", kropp, kraver_nyckel=False)
+
+    if namn == "verify_pass":
+        kropp = {"pass": arg["pass"]}
+        if arg.get("audience"):
+            kropp["audience"] = arg["audience"]
+        if arg.get("required_scope"):
+            kropp["required_scope"] = arg["required_scope"]
+        return _anrop("/api/v1/pass/verify", kropp, kraver_nyckel=False)
 
     if namn == "issue_pass":
         kropp = {"acts_for": arg["acts_for"]}
@@ -580,9 +918,18 @@ def hantera(begaran: dict) -> dict | None:
             resultat = {"error": f"Missing required argument: {exc}"}
         except Exception as exc:
             resultat = {"error": f"{type(exc).__name__}: {exc}"}
-        return _svar(rid, {"content": [
+        # Steg 132: fel markeras som fel, och verktyg med outputSchema
+        # får sitt resultat även som structuredContent. Texten finns
+        # kvar för klienter som inte läser det.
+        fel = isinstance(resultat, dict) and "error" in resultat
+        ut = {"content": [
             {"type": "text",
-             "text": json.dumps(resultat, ensure_ascii=False, indent=2)}]})
+             "text": json.dumps(resultat, ensure_ascii=False, indent=2)}],
+            "isError": fel}
+        if (not fel and isinstance(resultat, dict)
+                and p.get("name") in UTSCHEMAN):
+            ut["structuredContent"] = resultat
+        return _svar(rid, ut)
 
     if rid is None:
         return None          # okänd notifiering — tig

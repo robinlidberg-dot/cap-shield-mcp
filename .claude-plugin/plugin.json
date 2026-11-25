@@ -1,6 +1,6 @@
 {
   "name": "cap-shield",
-  "version": "0.7.0",
+  "version": "0.7.6",
   "description": "Memory selection, compression and signed agent passes for AI agents. Measured, not claimed.",
   "icon": ".claude-plugin/icon.png",
   "author": {

@@ -19,7 +19,7 @@ Recall@10 is the strict measure: a question counts only when ALL gold
 sessions were found. Finding half the answer means the agent answers
 confidently on half a basis.
 
-**Two of the nine tools need no account.** Measure first, decide after.
+**Four of the fifteen tools need no account**, and `start_sandbox` lets an agent try memory for 24 hours before anyone signs up.
 
 ## Install
 
@@ -55,8 +55,9 @@ In Claude Code:
 ```
 
 The plugin connects to `https://cap-shield-robin.fly.dev/mcp`.
-`measure_traffic`, `list_packages` and `get_account` work without a key;
-the other tools need one (see below). Privacy policy:
+`measure_traffic`, `list_packages`, `start_sandbox`, `verify_pass` and
+`get_account` work without a key; the other tools need one or a
+`sandbox_key` from `start_sandbox` (see below). Privacy policy:
 https://cap-shield-robin.fly.dev/privacy
 
 ## Use it from Claude (Claude.ai, Claude Desktop, or Cowork) — no download
@@ -75,13 +76,17 @@ Under **Authentication**, choose **No sign-in** — this server is
 authenticated with an API key, not OAuth (OAuth support is not built
 yet; see Status below). Claude will warn that anyone with the URL can
 use the connector without sign-in — that warning is accurate, and is
-exactly why the two free tools below need no key at all, while the rest
+exactly why the free tools below need no key at all, while the rest
 do.
 
-**`measure_traffic` and `list_packages` work immediately**, with no
-header and no account — nothing more to configure.
+**`measure_traffic`, `list_packages`, `start_sandbox` and `verify_pass`
+work immediately**, with no header and no account — nothing more to
+configure. To try memory without an account, call `start_sandbox` and
+pass the returned `sandbox_key` to the memory tools; everything in a
+sandbox is deleted after 24 hours.
 
-**To use the account tools** (`remember`, `assemble_context`,
+**To use the account tools** (`remember`, `remember_batch`,
+`list_memories`, `update_memory`, `forget`, `assemble_context`,
 `assemble_escalation_context`, `pack_batch`, `unpack_batch`,
 `issue_pass`): get a key first
 (`get_account`, or the console at
@@ -110,23 +115,35 @@ List the available dictionaries with their MEASURED compression, including the o
 
 ### `remember` · *requires a key*
 
-Store a memory entry for later retrieval. REQUIRES A KEY. This does not call any language model — it stores text in an isolated per-tenant archive. Use assemble_context to get relevant entries back.
+Store a memory entry for later retrieval. REQUIRES A KEY (or a sandbox_key from start_sandbox). This does not call any language model — it stores text in an isolated per-tenant archive. Use assemble_context to get relevant entries back.
+
+### `remember_batch` · *requires a key*
+
+Store up to 100 memory entries in ONE call. REQUIRES A KEY (or a sandbox_key from start_sandbox). Counts as one call against the rate limit and one packet per entry against the monthly quota, so prefer it over many remember calls. All or nothing: duplicate ids or a blocked entry reject the whole batch before anything is stored. Does not call any language model.
+
+### `list_memories` · *requires a key*
+
+List what is stored, newest first, with a short preview of each entry and its item_id. REQUIRES A KEY (or a sandbox_key from start_sandbox). Omit namespace to list your namespaces instead. Use the item_id with update_memory or forget. Read-only.
+
+### `update_memory` · *requires a key*
+
+Replace the text of an EXISTING memory entry. REQUIRES A KEY (or a sandbox_key from start_sandbox). Fails with MEMORY_NOT_FOUND if the item_id does not exist (use remember to create). The previous text is kept in the entry's version history; created date and tags are kept.
+
+### `forget` · *requires a key*
+
+Permanently delete up to 100 memory entries, including their version history. REQUIRES A KEY (or a sandbox_key from start_sandbox). Cannot be undone. Unknown ids are reported in not_found, not treated as an error.
 
 ### `assemble_context` · *requires a key*
 
-Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY. Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why. If the response has a `budget_warning`, the best match did not fit: call again with its `suggested_token_budget`.
+Retrieve the memory entries that answer a question, within a token budget. REQUIRES A KEY (or a sandbox_key from start_sandbox). Send the returned 'context' to your language model INSTEAD of the whole history. This does not call a model itself — it selects what to send. The budget is a ceiling, not a target: selection stops where relevance runs out, often well below it. The response says how many entries were left behind and why. If the response has a 'budget_warning', the best match did not fit: call again with its suggested_token_budget.
 
 ### `assemble_escalation_context` · *requires a key*
 
-Retrieve a WIDE context for a question your model could not answer from assemble_context. REQUIRES A KEY. Use it when assemble_context returned escalate_recommended=true, or when the answer depends on dates, counts or several sessions. This does not call a model itself. Returns 'context' (up to token_budget, default 150 000 tokens: lower it if your model's window is smaller), where each stored entry starts with a header '--- Session YYYY/MM/DD (Ddd) HH:MM ---' giving when it was stored, and 'utelamnat_kontext': lower-ranked entries that were left out, in the same format. Read those only if the answer is still missing from 'context'. Python users can pass the whole response to cap_escalate_helper.eskalera_om_behovs_v6().
+Retrieve a WIDE context for a question your model could not answer from assemble_context. REQUIRES A KEY (or a sandbox_key from start_sandbox). Use it when assemble_context returned escalate_recommended=true, or when the answer depends on dates, counts or several sessions. This does not call a model itself. Returns 'context' (up to token_budget, default 150 000 tokens: lower it if your model's window is smaller), where each stored entry starts with a header '--- Session YYYY/MM/DD (Ddd) HH:MM ---' giving when it was stored, and 'utelamnat_kontext': lower-ranked entries that were left out, in the same format. Read those only if the answer is still missing from 'context'. Python users can pass the whole response to cap_escalate_helper.eskalera_om_behovs_v6().
 
-### `pack_batch` · *requires a key*
+### `start_sandbox` · *no account*
 
-Pack several messages into ONE compressed packet instead of packing them one at a time. REQUIRES A KEY. Worth it for many small/medium messages (the per-message header cost is paid once per batch, and zstd shares context across them) — for a single message this has no advantage. Returns packet_b64 (hand it to unpack_batch to get the messages back) plus the measured byte savings versus packing each message separately. SECURITY: only batch messages that already share the SAME trust boundary (same tenant/agent — nothing attacker-influenced mixed in with a secret). Batched messages share one compression context, which can leak size-based information between them (a CRIME/BREACH-style side channel). There is no padding mitigation on this endpoint today, so trust-boundary separation is the only protection — don't rely on padding.
-
-### `unpack_batch` · *requires a key*
-
-Unpack a batch packet made by pack_batch (or by the /api/v1/pack-batch endpoint) back into the exact original list of messages, in order. REQUIRES A KEY. Not for a packet made by the single-message pack endpoint — that is a different format and this will reject it.
+Try memory WITHOUT an account. Returns a temporary sandbox_key; pass it as the sandbox_key argument to remember, remember_batch, assemble_context, list_memories, update_memory or forget. Everything is deleted after 24 hours. Limits: 200 entries, 1 MB of text. No email needed. Do not store real personal data in a sandbox.
 
 ### `get_account`
 
@@ -135,6 +152,18 @@ Get an account and an API key. Requires an email address. The key is returned ON
 ### `issue_pass` · *requires a key*
 
 **Agent identity / agent passport.** Issue a short-lived (15 minute) signed credential (a JWT) stating who the caller acts for. REQUIRES A KEY. Anyone can verify it independently against /.well-known/jwks.json — without calling CAP-Shield again. 'acts_for' and 'scope' are NOT validated against reality: the pass only attests that the key holder claimed this, at this time, and that the claim is recorded in the audit chain. This is identity and claimed authorization, not a payment or access-control mechanism.
+
+### `verify_pass` · *no account*
+
+Check a CAP-Shield pass you were given: signature against CAP-Shield's published keys, issuer, expiry, and, if you give them, audience and required scope. No key needed. Returns valid true/false with the reason and the claims. It cannot tell you whether acts_for is TRUE, only that a key holder claimed it.
+
+### `pack_batch` · *requires a key*
+
+Pack several messages into ONE compressed packet instead of packing them one at a time. REQUIRES A KEY. Worth it for many small/medium messages (the per-message header cost is paid once per batch, and zstd shares context across them) — for a single message this has no advantage. Returns packet_b64 (hand it to unpack_batch to get the messages back) plus the measured byte savings versus packing each message separately. SECURITY: only batch messages that already share the SAME trust boundary (same tenant/agent — nothing attacker-influenced mixed in with a secret). Batched messages share one compression context, which can leak size-based information between them (a CRIME/BREACH-style side channel). There is no padding mitigation on this endpoint today, so trust-boundary separation is the only protection — don't rely on padding.
+
+### `unpack_batch` · *requires a key*
+
+Unpack a batch packet made by pack_batch (or by the /api/v1/pack-batch endpoint) back into the exact original list of messages, in order. REQUIRES A KEY. Not for a packet made by the single-message pack endpoint — that is a different format and this will reject it.
 
 The descriptions above are copied verbatim from the server. If they ever
 differ from what `tools/list` returns, the server is right and this file
@@ -178,26 +207,33 @@ the result.
 
 ### How often the answer is right
 
-Measured 2026-11-16 with `gpt-6-luna` answering. The full method, the
+Answers produced 2026-11-16 with `gpt-6-luna`; official judging run
+2026-11-22. The full method, the
 answer to every question type, and each answer that was reviewed by hand
 are published under `memory_layer.answer_benchmark` in
 https://cap-shield-robin.fly.dev/.well-known/cap-shield.json — fetch the
 current figures there rather than trusting this file.
 
-| Test | This version | Previous version |
-|---|---|---|
-| LongMemEval-S, 500 questions, judged automatically | 96.6 % | 88.0 % |
-| After manual review of 10 answers (each listed) | 98.6 % | |
-| LoCoMo, 100 questions it was never tuned on | 80 / 100 | 81 / 100 |
+Judged exactly as in the LongMemEval paper (GPT-4o as judge, the
+official judge prompts), LongMemEval-S, 500 questions, `gpt-6-luna`
+answering: **481 of 500 correct (96.2 %)**. Our own automatic judging
+of the same answers gives 96.6 % (previous helper version 88.0 %), and
+98.6 % after manual review of ten answers, each listed in the
+measurement file.
+
+On 200 LoCoMo questions held out and never read during development,
+v6.2 answered **170** correctly, against 148 for v6.1. The gain is on
+questions about a person the conversation says nothing about: v6.2
+checks which speaker a fact belongs to before answering.
 
 Three caveats, which belong next to those figures wherever they are
 quoted:
 
-- **Developed against the same 500 questions.** The rules in the helper
-  were written while studying misses on that set. On LoCoMo, which they
-  were never tuned on, they gave no gain over the previous version.
-- **The judge is not the GPT-4o from the LongMemEval paper**, so the
-  figures are not directly comparable to published LongMemEval scores.
+- **Developed against the same 500 LongMemEval questions.** The rules in
+  the helper were written while studying misses on that set; the LoCoMo
+  figures are from questions that were never read.
+- **The answer model is our own choice**, so the judging is comparable
+  with other published LongMemEval scores but the setup is not identical.
 - **They depend on the answer model.**
 
 Six of the ten reviewed answers meet the official preference rubric but
@@ -290,7 +326,7 @@ longer has an account.
 
 ## Status
 
-Beta. MCP server 0.7.0, Python package 0.6.0.
+Beta. MCP server 0.7.6, Python package 0.6.2.
 
 Docs: https://cap-shield-robin.fly.dev/docs/quickstart
 Console: https://cap-shield-console.lovable.app
